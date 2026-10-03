@@ -147,7 +147,7 @@ def test_require_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     assert key.get_secret_value() == FAKE_KEY
 
 
-def test_secrets_never_reveared(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_secrets_never_revealed(monkeypatch: pytest.MonkeyPatch) -> None:
     # Unset secrets are shown as "unset", never as a leak
     s0 = Settings()
     assert s0.safe_dump()["openrouter_api_key"] == "unset"
