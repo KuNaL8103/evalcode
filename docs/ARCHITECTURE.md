@@ -227,7 +227,7 @@ All errors derive from `LLMError`. Nodes talk only to `TextLLM`; nothing else im
 | Free-tier per-minute/daily limits | Throttle, backoff, `Retry-After`, `DailyQuotaExceeded` fail-fast, per-run call budget, optional LLM calls off by default, small prompts, resumable eval |
 | Free model slug removed/renamed | `LLM_MODEL` env var; `LLMModelError` with a clear hint; verify slug against `https://openrouter.ai/api/v1/models` |
 | Free models ignore the output format | Tagged-text protocol with tolerant parser, fenced-block fallback, one format re-ask, then graceful fail |
-| Reasoning models burn tokens on `think` | `LLM_MAX_TOKENS` cap, `think` stripping |
+| Reasoning models burn tokens on `<think>` | `LLM_MAX_TOKENS` cap, `<think>` stripping |
 | Missing usage metadata from provider | Estimate from char counts, flagged `estimated_calls` |
 | LLM writes wrong tests, loop chases a phantom bug | `fault` attribution; `provided_tests` mode; human review |
 | Irrelevant retrieval | min-score threshold, metadata, `search` command, eval RAG on/off |
