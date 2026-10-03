@@ -79,12 +79,14 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Docs housekeeping (1c382ae): PLAN.md fixes, full Windows sandbox guidance in ARCHITECTURE §6, dev-environment note; no source/test changes.
 - Task 1 (bdbba70): `.env` + python-dotenv setup and the config module (`config.py`, `errors.py`, full `.env.example`, 8 config tests).
 - Housekeeping (this commit): autouse env-isolation fixture in `tests/conftest.py`, test-name fix, compact status format, tag-literal-safety conventions.
+- Task 2: doc loaders & chunking — `rag/types.py`, `rag/chunking.py`, `rag/loaders.py` (`DocChunk`, `stable_id`, `truncate_text`, `split_markdown`, `iter_introspection_chunks`, `iter_text_file_chunks`); 12 new tests.
 
-### Latest milestone (Task 1)
-- `src/evalcode/config.py`: `Settings` (pydantic-settings `BaseSettings`, 32 settings, `extra="ignore"`, `env_ignore_empty=True`; pydantic-settings' own `env_file` deliberately NOT used), `load_settings(env_file=None)` (explicit `load_dotenv(..., override=False)` — real env vars beat `.env`), cached `get_settings()` (`lru_cache` + `cache_clear()` for tests), `require_api_key()` (raises `ConfigError` with setup help, never key material), `safe_dump()` (secrets masked `"***"`/`"unset"`).
-- Notable deviations: `doc_libraries` uses `Annotated[list[str], NoDecode]` + a `mode="before"` validator (accepts a comma-separated env string AND a real list); `model_dump()` keeps the self-masking `SecretStr` instance rather than a plain string.
-- `src/evalcode/errors.py` (`EvalcodeError`, `ConfigError`); `.env.example` lists every setting grouped with secrets blank; 8 tests incl. a secret-hygiene scan of git-tracked files.
-- `pytest -q` → 10 passed (2 Task 0 + 8 new; no live/slow tests exist yet). Installed: pydantic-settings 2.15.0, python-dotenv 1.2.4 (pydantic 2.13.5).
+### Latest milestone (Task 2)
+- `src/evalcode/rag/types.py`: pydantic `DocChunk` (`id`, `text`, `metadata: dict[str, str|int|float|bool]`); required metadata keys: `library`, `version`, `qualname`, `kind` (module|function|class|method|text), `import_path`, `source_type` (introspection|text_file), plus `source_path` for text files.
+- `src/evalcode/rag/chunking.py`: `stable_id(*parts)` (sha1, first 16 hex chars, `\x00`-joined so part order matters), `truncate_text(text, max_chars)` (sentence→newline→word boundary, appends `…`, never exceeds the limit), `split_markdown(text, max_chars=800, overlap=100)` (headings first, heading context kept at the top of each piece, then pack by paragraph/line/word; CRLF→LF; consecutive pieces share an `overlap` tail; a single line longer than `max_chars` is kept whole).
+- `src/evalcode/rag/loaders.py`: `iter_introspection_chunks(library, *, max_chars=1000, include_private=False)` (importlib + `importlib.metadata` version, stdlib→"stdlib"; `__all__` else non-underscore names; one chunk per function/class/method with the signature line first and docstring truncated to fit; a class chunk lists its method names; re-exports deduped by `id()`; submodules skipped; a broken attribute is logged and skipped, never fatal) and `iter_text_file_chunks(path, *, library=None, max_chars=800, overlap=100)` (file or dir of `.md/.rst/.txt`; UTF-8 with `errors="replace"` + warning; forward-slash `source_path`; id = path + chunk index + content hash).
+- Signature/char deviation: chunk text is `"{import_path}.{name(params)}\n\n{doc}"` (dotted name + params on the signature line, import_path captured in metadata) rather than a raw `import_path + signature` concatenation, to avoid a doubled module prefix.
+- `pytest -q` → 22 passed (10 existing + 12 new; no live/slow tests yet). `ruff check .` and `ruff format --check .` clean.
 
 ### Not started
-Task 2 onward.
+Task 3 onward.

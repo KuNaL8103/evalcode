@@ -1,1 +1,1 @@
-"""RAG layer: doc loading, chunking, embeddings, vector store, retrieval."""
+"""RAG layer: documentation chunking, loaders, embeddings, and retrieval."""
