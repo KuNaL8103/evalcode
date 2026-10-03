@@ -193,12 +193,12 @@ All errors derive from `LLMError`. Nodes talk only to `TextLLM`; nothing else im
 `run_in_sandbox(code, tests, timeout_s, mem_mb) -> RunResult`:
 1. Pre-flight (no process): `ast.parse` (→ `syntax_error`); `importlib.util.find_spec` on top-level imports (→ `import_error`).
 2. Write `solution.py` and `test_solution.py` into a fresh temp dir.
-3. Run `[sys.executable, "-E", "-s", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=report.xml", "test_solution.py"]` with `cwd=tmpdir`, `start_new_session=True`, scrubbed environment (no `OPENROUTER_*`, `*_API_KEY`, `*_TOKEN`, `HF_*`, `LANGSMITH_*`; `HOME=tmpdir`), and on POSIX `resource.setrlimit` for CPU time, address space, file size.
-4. Wall-clock timeout → kill the process group → `timeout`.
+3. Run `[sys.executable, "-E", "-s", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=report.xml", "test_solution.py"]` with `cwd=tmpdir`, `start_new_session=True` on POSIX (on Windows instead `creationflags=subprocess.CREATE_NEW_PROCESS_GROUP`), scrubbed environment (no `OPENROUTER_*`, `*_API_KEY`, `*_TOKEN`, `HF_*`, `LANGSMITH_*`; `HOME=tmpdir`), and on POSIX `resource.setrlimit` for CPU time, address space, file size.
+4. Wall-clock timeout → kill the process group (POSIX `os.killpg`; on Windows `taskkill /F /T /PID <pid>`) → `timeout`.
 5. Parse junit XML and traceback tails into structured `RunFailure`s; truncate stdout/stderr; classify (`ImportError`/`ModuleNotFoundError` → `import_error`; `AssertionError` → `assertion_failure`; collection errors map by exception type).
 6. Always clean up the temp dir.
 
-**Threat model**: protects against accidental damage and runaway code from LLM output. It is **not** a security boundary against a determined adversary (network not blocked; filesystem not jailed). Windows lacks `resource`; rlimits are skipped there with a logged warning. A Docker backend is the documented upgrade path.
+**Threat model**: protects against accidental damage and runaway code from LLM output. It is **not** a security boundary against a determined adversary (network not blocked; filesystem not jailed). Windows host: the primary dev machine is Windows, and `os.killpg`, `start_new_session`, `preexec_fn`, and `resource` are POSIX-only. On Windows: spawn with `creationflags=subprocess.CREATE_NEW_PROCESS_GROUP`; on timeout kill the whole process tree with `taskkill /F /T /PID <pid>` (no psutil dependency); skip rlimits (log a warning — the wall-clock timeout is then the only resource guard); keep SYSTEMROOT in the scrubbed env and point HOME, USERPROFILE, TEMP and TMP at the sandbox temp dir; retry temp-dir cleanup on file-lock errors; POSIX-only tests (e.g. the memory-limit test) are skipped. Platform branches live behind `sys.platform` checks inside `sandbox/runner.py`. A Docker backend is the documented upgrade path.
 
 ## 7. Human-in-the-loop
 

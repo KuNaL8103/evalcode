@@ -7,6 +7,7 @@ evalcode is an iterative **Code Generation Agent** built with **RAG + LangGraph*
 - Design of record: `docs/ARCHITECTURE.md`. Task plan: `docs/PLAN.md`.
 - Python 3.11+. Package: `src/evalcode`.
 - **LLM constraint**: OpenRouter free models only, via `langchain_openai.ChatOpenAI(base_url="https://openrouter.ai/api/v1")`. Key only from env `OPENROUTER_API_KEY`; model from env `LLM_MODEL` (default `qwen/qwen3.8-27b:free`). No other providers, no hardcoded keys.
+- Dev environment: Windows, Python 3.13.3, venv at .venv (use `.venv/Scripts/python`). Bash-style commands in this file need Windows equivalents (e.g. `copy .env.example .env`, `.venv\Scripts\activate`). Guard POSIX-only APIs (`os.killpg`, `preexec_fn`, `resource`) behind `sys.platform` checks.
 
 ## Directory layout (target; `(Task N)` = task that creates it)
 ```
@@ -49,12 +50,15 @@ python -m evalcode.rag.ingest --help   # ingestion (CLI wrapper arrives in Task 
 evalcode run "write a function that ..."   # from Task 12
 ```
 
+On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/Scripts/python -m pytest` if the venv isn't activated.
+
 ## Conventions
 - **One task per session.** Read `docs/PLAN.md` for the current task, do only that task, never start the next one.
 - **Tests are first-class**: every task ships tests; `pytest -q` and `ruff check .` must be green before committing. Unit tests must never hit the network or a real LLM — use `tests/fakes.py` (`FakeChatModel`, `ScriptedLLM`) and `FakeEmbedder`.
 - **LLM access only through `evalcode.llm.LLMClient` / the `TextLLM` protocol.** Nodes must never import or call `ChatOpenAI` directly. Backoff, throttling, and the per-run call budget live there.
 - **Protect the free quota**: don't add LLM calls casually; optional LLM calls (`ANALYZE_WITH_LLM`, `QUERY_REWRITE_WITH_LLM`) stay off by default; `live` tests must use the fewest calls possible; never loop on LLM calls without a budget.
 - **Secrets**: the key comes only from the environment (`.env` via python-dotenv). Never hardcode, print, log, or commit it. Use `SecretStr`; redact in logs; the sandbox env is scrubbed. `.env` must stay git-ignored.
+- **Secret-scan hygiene test** (added in Task 1) skips the tests/ directory and treats obvious placeholders (your-…, <…>, ...) as blank; fake keys in tests should still be built at runtime (e.g. `'sk-or-v1-' + 'FAKE' * 6`) rather than written as literals.
 - **Typing**: full type hints; `from __future__ import annotations`; pydantic v2 for validated models; plain `TypedDict` for LangGraph state values (checkpoint-safe).
 - **Nodes** are pure-ish functions `(state) -> partial state dict`; dependencies injected via factories (`make_*_node`). Never mutate the incoming state. LLM failures in mandatory nodes become `status="failed"` + `failure_reason`, not crashes.
 - **No side effects before `interrupt()`** (the node re-runs on resume).
@@ -71,3 +75,4 @@ Task 0 complete (2026-10-03): repo initialized on `main` with remote, docs + too
 - Added: `docs/ARCHITECTURE.md`, `docs/PLAN.md`, `pyproject.toml` (hatchling, src layout, extras `dev`/`corpus`; ruff `line-length 100`, select `E,F,I,UP,B`, `docs/` excluded from formatting to keep the architecture doc's code blocks verbatim), `.gitignore` (`.env` ignored, `.env.example` negated), `.env.example`, `src/evalcode` package (empty `rag/`, `nodes/`, `sandbox/` subpackages), `tests/{unit,integration}/` + `conftest.py`, 2 unit tests.
 - Installed in `.venv`: langgraph 1.2.12, langchain-openai 1.6.7, langchain-huggingface 1.2.2, sentence-transformers 6.1.0, chromadb 1.5.9, openai 3.24.0, torch 2.14.1+cpu (CPU-only wheel; see Commands).
 - NOT started: everything from Task 1 onward (no `config.py`, `errors.py`, or node code yet; `config.py` intentionally left out of this task).
+- Housekeeping commit (2026-10-03): fixed PLAN.md Task 8 aside + 3 task-entry additions, replaced ARCHITECTURE §6's one-line Windows note with full Windows sandbox guidance (`CREATE_NEW_PROCESS_GROUP`, `taskkill /F /T`, env/cleanup/skip details) and annotated sandbox steps 3–4, recorded the Windows dev environment in CLAUDE.md; tag-integrity grep confirmed all `<...>` protocol tags intact. No source or test changes.
