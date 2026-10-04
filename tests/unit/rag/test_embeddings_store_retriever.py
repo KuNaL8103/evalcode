@@ -23,7 +23,7 @@ from evalcode.rag.store import VectorStore
 from evalcode.rag.types import DocChunk
 
 
-def _chunk(id: str, text: str, library: str) -> DocChunk:
+def _chunk(id: str, text: str, library: str, embed_text: str | None = None) -> DocChunk:
     return DocChunk(
         id=id,
         text=text,
@@ -35,6 +35,7 @@ def _chunk(id: str, text: str, library: str) -> DocChunk:
             "import_path": library,
             "source_type": "introspection",
         },
+        embed_text=embed_text,
     )
 
 
@@ -99,7 +100,9 @@ def test_store_upsert_idempotent(tmp_path: Path) -> None:
 
 
 def test_store_query_returns_exact_text_first(tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
+    # dim=2048 keeps FakeEmbedder bag-of-tokens collisions far below the
+    # tolerances asserted below.
+    store = _make_store(tmp_path, dim=2048)
     target = _chunk("target", "parse json string into a python object", "json")
     others = [
         _chunk("o1", "completely unrelated zebra quartet", "json"),
@@ -114,8 +117,34 @@ def test_store_query_returns_exact_text_first(tmp_path: Path) -> None:
         assert [h[1] for h in hits] == sorted([h[1] for h in hits], reverse=True)
         # Every hit carries the chunk text and metadata back.
         assert hits[0][0].metadata["library"] == "json"
+        # Cosine-space proof: chunks sharing NO tokens with the query have an
+        # orthogonal embedding, so their score must be ~0 (1 - cosine distance).
+        # Under L2 space the same normalized vectors would score ~-1, so this
+        # fails if the collection silently falls back to the L2 default.
+        by_id = {c.id: s for c, s in hits}
+        assert abs(by_id["o1"]) <= 0.05, by_id
+        assert abs(by_id["o2"]) <= 0.05, by_id
     finally:
         store.close()
+
+    # embed_text decoupling: the chunk is EMBEDDED from embed_text but its
+    # stored/returned .text stays the full (here deliberately different) text.
+    store2 = VectorStore(tmp_path / "chroma2", "decoupled", FakeEmbedder(dim=2048))
+    try:
+        dec = _chunk(
+            "dec",
+            "zzz unrelated",
+            "json",
+            embed_text="parse json string into a python object",
+        )
+        filler = _chunk("filler", "mangrove saxophone documents", "json")
+        store2.upsert([dec, filler])
+        hits2 = store2.query("parse json string into a python object", k=2)
+        assert hits2[0][0].id == "dec"
+        assert hits2[0][0].text == "zzz unrelated"
+        assert hits2[0][1] > 0.99
+    finally:
+        store2.close()
 
 
 def test_store_query_where_library_filter(tmp_path: Path) -> None:

@@ -73,7 +73,11 @@ class VectorStore:
         if not ids:
             return 0
 
-        vectors = self._embedder.embed_documents([by_id[i].text for i in ids])
+        # Embed the compact text when present; the FULL text stays the stored
+        # document (display/prompts) and the text of chunks returned by query.
+        vectors = self._embedder.embed_documents(
+            [(by_id[i].embed_text or by_id[i].text) for i in ids]
+        )
         for i in range(0, len(ids), self._max_batch_size):
             batch = ids[i : i + self._max_batch_size]
             self._collection.upsert(

@@ -27,6 +27,7 @@ __all__ = [
     "alias_of_public",
     "nosig",
     "broken",
+    "with_obj",
     "PI",
     "LIMIT",
     "NOTHING",
@@ -46,6 +47,11 @@ def _hidden():
 def public_func(x):
     """Public function doc."""
     return x * 2
+
+
+def with_obj(x, _w=object()):
+    """Doc."""
+    return x
 
 
 alias_of_public = public_func
@@ -250,6 +256,12 @@ def test_introspection_json_loads() -> None:
     assert loads.metadata["kind"] == "function"
     assert loads.metadata["library"] == "json"
     assert loads.metadata["source_type"] == "introspection"
+    # Compact embedding text: "dotted.name: first sentence", short, while the
+    # full chunk text keeps the signature line for display/prompts.
+    assert loads.embed_text is not None
+    assert loads.embed_text.startswith("json.loads")
+    assert len(loads.embed_text) < 300
+    assert loads.text.startswith("json.loads")
 
     # C-implemented class methods are indexed as method chunks whose text
     # starts with their dotted name.
@@ -270,9 +282,11 @@ def test_introspection_json_loads() -> None:
     assert pl["pathlib.Path.with_suffix"].metadata["library"] == "pathlib"
     assert pl["pathlib.Path.with_suffix"].metadata["kind"] == "method"
 
-    # Every introspection chunk (json, datetime, collections) stays bounded.
+    # Every introspection chunk (json, datetime, collections) stays bounded,
+    # and no runtime object-repr pointer leaks into any chunk text.
     for c in list(chunks) + list(dt.values()) + list(col.values()):
         assert len(c.text) <= 1000, f"chunk too long: {c.metadata['qualname']}"
+        assert " at 0x" not in c.text, c.metadata["qualname"]
 
     # A missing library logs a warning and yields nothing, no exception.
     assert list(iter_introspection_chunks("no_such_module_xyz")) == []
@@ -306,6 +320,11 @@ def test_introspection_thrownaway_package(mymod) -> None:
     # Signature fallback "(...)" for the builtin with no introspectable sig.
     nosig = next(c for c in chunks if c.metadata["qualname"] == "mymod.nosig")
     assert "(...)" in nosig.text
+    # A default value that renders as a runtime object repr is sanitized to
+    # "..." so the chunk text carries no pointer and stays deterministic.
+    with_obj = next(c for c in chunks if c.metadata["qualname"] == "mymod.with_obj")
+    assert "_w=..." in with_obj.text
+    assert "0x" not in with_obj.text
     # Plain constants are never turned into chunks.
     assert "mymod.PI" not in names
     assert "mymod.LIMIT" not in names

@@ -49,6 +49,9 @@ class DocChunk(BaseModel):
     id: str
     text: str
     metadata: dict[str, MetadataValue] = Field(default_factory=dict)
+    # Optional shortened text used for EMBEDDING only (not stored in Chroma,
+    # not part of metadata). ``text`` stays the full chunk for display/prompts.
+    embed_text: str | None = None
 
     def is_text_file(self) -> bool:
         """True when this chunk came from a local text document."""

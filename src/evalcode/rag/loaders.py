@@ -19,6 +19,7 @@ import importlib
 import importlib.metadata
 import inspect
 import logging
+import re
 import types
 from collections.abc import Iterator
 from pathlib import Path
@@ -41,6 +42,17 @@ _METHOD_TYPES = (
     types.MethodDescriptorType,
     types.ClassMethodDescriptorType,
 )
+
+# Default values that render as a runtime object repr, e.g.
+# ``_w=<built-in method match of re.Pattern object at 0x000001CD4B82E810>``.
+# They are pure noise in embeddings and prompts, and the pointer makes chunk
+# text non-deterministic across processes; replace the whole ``<...>`` token.
+_OBJ_REPR_RE = re.compile(r"<[^<>]*at 0x[0-9A-Fa-f]+>")
+
+
+def _clean_signature(signature: str) -> str:
+    """Strip runtime object reprs from a rendered signature."""
+    return _OBJ_REPR_RE.sub("...", signature)
 
 
 # --- Introspection loader --------------------------------------------------
@@ -118,6 +130,7 @@ def _class_chunks(
         qualname=qualname,
         kind="class",
         text=text,
+        embed_text=_embed_text(qualname, doc),
     )
 
     # One chunk per public method, named ``Class.method``.
@@ -145,6 +158,7 @@ def _class_chunks(
             qualname=f"{library}.{mdisplay}",
             kind="method",
             text=mtext,
+            embed_text=_embed_text(f"{library}.{mdisplay}", mdoc),
         )
 
 
@@ -168,12 +182,14 @@ def _callable_chunks(
     if not doc and not _has_signature_info(obj):
         return
     text = truncate_text(f"{library}.{head}\n\n{doc}".rstrip(), max_chars)
+    qualname = f"{library}.{name}"
     yield _chunk(
         library,
         version=_version_of(library),
-        qualname=f"{library}.{name}",
+        qualname=qualname,
         kind="function",
         text=text,
+        embed_text=_embed_text(qualname, doc),
     )
 
 
@@ -183,7 +199,7 @@ def _signature_string(obj, display_name: str) -> tuple[str, bool]:
         params = str(inspect.signature(obj))
     except (ValueError, TypeError):
         return f"{display_name}(...)", False
-    return f"{display_name}{params}", True
+    return _clean_signature(f"{display_name}{params}"), True
 
 
 def _has_signature_info(obj) -> bool:
@@ -275,6 +291,20 @@ def _version_of(library: str) -> str:
     return _version_cache[library]
 
 
+def _embed_text(dotted_name: str, doc: str) -> str:
+    """Compact embedding input: ``dotted.name: first sentence of the docstring``.
+
+    MiniLM's ~256-token window is mostly consumed by long signatures, so
+    embeddings use a short, meaning-first text instead of the full chunk.
+    Falls back to the dotted name alone when there is no docstring.
+    """
+    piece = re.split(r"\. |\n\s*\n", doc, maxsplit=1)[0]
+    first_sentence = " ".join(piece.split())[:200]
+    if not first_sentence:
+        return dotted_name
+    return f"{dotted_name}: {first_sentence}"
+
+
 def _chunk(
     library: str,
     *,
@@ -282,6 +312,7 @@ def _chunk(
     qualname: str,
     kind: str,
     text: str,
+    embed_text: str | None = None,
 ) -> DocChunk:
     metadata: dict[str, MetadataValue] = {
         "library": library,
@@ -292,7 +323,7 @@ def _chunk(
         "source_type": "introspection",
     }
     chunk_id = stable_id("introspection", library, version, kind, qualname)
-    return DocChunk(id=chunk_id, text=text, metadata=metadata)
+    return DocChunk(id=chunk_id, text=text, metadata=metadata, embed_text=embed_text)
 
 
 # --- Text-file loader ------------------------------------------------------
