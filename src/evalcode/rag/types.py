@@ -7,11 +7,27 @@ re-ingestion is idempotent against the vector store.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 from pydantic import BaseModel, Field
 
 # The metadata values we ever store. Kept as a narrow union so the vector
 # store can pass them through as plain JSON scalars.
 MetadataValue = str | int | float | bool
+
+
+class RetrievedDoc(TypedDict):
+    """One retrieved document, as it is stored in graph state.
+
+    Plain ``TypedDict`` (JSON-serializable) so it checkpoints cleanly.
+    """
+
+    id: str
+    text: str
+    score: float
+    library: str
+    qualname: str
+    import_path: str
 
 
 class DocChunk(BaseModel):
