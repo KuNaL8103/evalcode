@@ -54,6 +54,7 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 
 ## Conventions
 - **One task per session.** Read `docs/PLAN.md` for the current task, do only that task, never start the next one.
+- **Quota- and CPU-friendly tooling**: every tool call costs free-model quota. Run pytest in the foreground as ONE process (timeout up to 10 minutes) — never in the background, never two heavy python/pytest processes at once, never poll with sleep loops. Normal full-suite runtime is roughly 30–90 s (the dependency-import test loads torch); if a run exceeds ~3 minutes, stop and investigate (duplicate or stuck python processes) instead of waiting. Never kill processes you didn't start — ask me.
 - **Tests are first-class**: every task ships tests; `pytest -q` and `ruff check .` must be green before committing. Unit tests must never hit the network or a real LLM — use `tests/fakes.py` (`FakeChatModel`, `ScriptedLLM`) and `FakeEmbedder`.
 - **LLM access only through `evalcode.llm.LLMClient` / the `TextLLM` protocol.** Nodes must never import or call `ChatOpenAI` directly. Backoff, throttling, and the per-run call budget live there.
 - **Protect the free quota**: don't add LLM calls casually; optional LLM calls (`ANALYZE_WITH_LLM`, `QUERY_REWRITE_WITH_LLM`) stay off by default; `live` tests must use the fewest calls possible; never loop on LLM calls without a budget.
@@ -78,15 +79,17 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 0 (e2c588e): repo init & scaffold — docs, pyproject, `.env.example`, `.gitignore`, package + tests layout; 2 unit tests.
 - Docs housekeeping (1c382ae): PLAN.md fixes, full Windows sandbox guidance in ARCHITECTURE §6, dev-environment note; no source/test changes.
 - Task 1 (bdbba70): `.env` + python-dotenv setup and the config module (`config.py`, `errors.py`, full `.env.example`, 8 config tests).
-- Housekeeping (this commit): autouse env-isolation fixture in `tests/conftest.py`, test-name fix, compact status format, tag-literal-safety conventions.
-- Task 2: doc loaders & chunking — `rag/types.py`, `rag/chunking.py`, `rag/loaders.py` (`DocChunk`, `stable_id`, `truncate_text`, `split_markdown`, `iter_introspection_chunks`, `iter_text_file_chunks`); 12 new tests.
+- Housekeeping (27782b7): autouse env-isolation fixture in `tests/conftest.py`, test-name fix, compact status format, tag-literal-safety conventions.
+- Task 2 (97c1f2b): doc loaders & chunking — `rag/types.py`, `rag/chunking.py`, `rag/loaders.py` (`DocChunk`, `stable_id`, `truncate_text`, `split_markdown`, `iter_introspection_chunks`, `iter_text_file_chunks`); 12 new tests.
+- Task 2 fix-up: skip non-callable constants, root-relative text-file paths, BOM-safe (`utf-8-sig`) decoding, fence-aware headings; test count unchanged (22).
 
 ### Latest milestone (Task 2)
 - `src/evalcode/rag/types.py`: pydantic `DocChunk` (`id`, `text`, `metadata: dict[str, str|int|float|bool]`); required metadata keys: `library`, `version`, `qualname`, `kind` (module|function|class|method|text), `import_path`, `source_type` (introspection|text_file), plus `source_path` for text files.
 - `src/evalcode/rag/chunking.py`: `stable_id(*parts)` (sha1, first 16 hex chars, `\x00`-joined so part order matters), `truncate_text(text, max_chars)` (sentence→newline→word boundary, appends `…`, never exceeds the limit), `split_markdown(text, max_chars=800, overlap=100)` (headings first, heading context kept at the top of each piece, then pack by paragraph/line/word; CRLF→LF; consecutive pieces share an `overlap` tail; a single line longer than `max_chars` is kept whole).
 - `src/evalcode/rag/loaders.py`: `iter_introspection_chunks(library, *, max_chars=1000, include_private=False)` (importlib + `importlib.metadata` version, stdlib→"stdlib"; `__all__` else non-underscore names; one chunk per function/class/method with the signature line first and docstring truncated to fit; a class chunk lists its method names; re-exports deduped by `id()`; submodules skipped; a broken attribute is logged and skipped, never fatal) and `iter_text_file_chunks(path, *, library=None, max_chars=800, overlap=100)` (file or dir of `.md/.rst/.txt`; UTF-8 with `errors="replace"` + warning; forward-slash `source_path`; id = path + chunk index + content hash).
 - Signature/char deviation: chunk text is `"{import_path}.{name(params)}\n\n{doc}"` (dotted name + params on the signature line, import_path captured in metadata) rather than a raw `import_path + signature` concatenation, to avoid a doubled module prefix.
-- `pytest -q` → 22 passed (10 existing + 12 new; no live/slow tests yet). `ruff check .` and `ruff format --check .` clean.
+- Fix-ups: non-callable constants (e.g. `datetime.MINYEAR`/`UTC`) no longer yield chunks; text-file `source_path`/`qualname`/id are root-relative (file name for a single file); text files decode as `utf-8-sig` (BOM dropped); headings are not detected inside fenced code blocks.
+- `pytest -q` → 22 passed (unchanged; no live/slow tests yet). `ruff check .` and `ruff format --check .` clean.
 
 ### Not started
 Task 3 onward.

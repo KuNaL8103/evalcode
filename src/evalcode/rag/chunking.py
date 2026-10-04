@@ -87,13 +87,26 @@ def split_markdown(
     return [piece for piece in out if piece.strip()]
 
 
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
 def _split_into_sections(text: str) -> list[tuple[str, str]]:
-    """Split into ``(heading, body)`` sections on heading lines."""
+    """Split into ``(heading, body)`` sections on heading lines.
+
+    Lines inside a fenced code block (delimited by a line starting with three
+    backticks or three tildes) are never treated as headings, so a ``#`` comment
+    inside e.g. a Python block does not start a new section.
+    """
     sections: list[tuple[str, str]] = []
     heading = ""
     buffer: list[str] = []
+    in_fence = False
     for line in text.split("\n"):
-        if _HEADING_RE.match(line):
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            buffer.append(line)
+            continue
+        if not in_fence and _HEADING_RE.match(line):
             if heading or "".join(buffer).strip():
                 sections.append((heading, "\n".join(buffer)))
             heading = line.strip()

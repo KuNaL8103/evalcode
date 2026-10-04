@@ -141,7 +141,14 @@ def _callable_chunks(
     obj,
     max_chars: int,
 ) -> Iterator[DocChunk]:
-    """One chunk for a public function (or documented non-callable)."""
+    """One chunk for a public function or callable object.
+
+    Plain constants (numbers, strings, ``None``, module-level instances such as
+    ``datetime.MINYEAR`` / ``datetime.UTC``) are skipped: ``inspect.getdoc`` on
+    an instance returns its *class* docstring, which would produce a bogus chunk.
+    """
+    if not (callable(obj) or inspect.isroutine(obj)):
+        return
     doc = inspect.getdoc(obj) or ""
     head, ok = _signature_string(obj, name)
     # Skip objects that are neither documented nor introspectable.
@@ -252,9 +259,11 @@ def iter_text_file_chunks(
     """Yield :class:`DocChunk` items from ``.md`` / ``.rst`` / ``.txt`` files.
 
     ``path`` may be a single file or a directory (recursed for the supported
-    extensions). Files are read as UTF-8; undecodable bytes are replaced and a
-    warning logged. CRLF is handled by :func:`split_markdown`. ``source_path``
-    is stored with forward slashes so ids are stable across platforms.
+    extensions). Files are decoded as ``utf-8-sig`` (a leading BOM is dropped);
+    undecodable bytes fall back to replacement with a warning logged. CRLF is
+    handled by :func:`split_markdown`. ``source_path`` is the forward-slash path
+    RELATIVE to the given root (just the file name for a single-file input), so
+    ids never embed an absolute path and stay stable across locations.
     """
     root = Path(path)
     files = _collect_files(root)
@@ -265,6 +274,7 @@ def iter_text_file_chunks(
 
     default_library = root.name if root.is_dir() else root.stem
     lib = library or default_library
+    root_is_file = root.is_file()
 
     for f in files:
         try:
@@ -273,12 +283,14 @@ def iter_text_file_chunks(
             logger.warning("text loader: cannot read %s: %s", f, exc)
             continue
         try:
-            text = data.decode("utf-8")
+            text = data.decode("utf-8-sig")
         except UnicodeDecodeError:
             logger.warning("text loader: undecodable bytes in %s; replacing", f)
-            text = data.decode("utf-8", errors="replace")
+            text = data.decode("utf-8-sig", errors="replace")
 
-        src = f.as_posix()
+        # Root-relative forward-slash path (just the file name for a single
+        # file) so ids never embed an absolute path.
+        src = f.name if root_is_file else f.relative_to(root).as_posix()
         for i, piece in enumerate(split_markdown(text, max_chars=max_chars, overlap=overlap)):
             if not piece.strip():
                 continue

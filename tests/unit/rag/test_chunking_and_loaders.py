@@ -7,6 +7,7 @@ and a throwaway package created in ``tmp_path``.
 from __future__ import annotations
 
 import importlib
+import shutil
 import sys
 from pathlib import Path
 
@@ -17,9 +18,18 @@ from evalcode.rag.loaders import iter_introspection_chunks, iter_text_file_chunk
 from evalcode.rag.types import DocChunk
 
 # Throwaway package exercising __all__, privacy, classes/methods, a signature
-# fallback, a re-export dedupe, and a deliberately broken attribute.
+# fallback, a re-export dedupe, a broken attribute, and plain constants.
 _PACKAGE_SRC = '''
-__all__ = ["public_func", "MyClass", "alias_of_public", "nosig", "broken"]
+__all__ = [
+    "public_func",
+    "MyClass",
+    "alias_of_public",
+    "nosig",
+    "broken",
+    "PI",
+    "LIMIT",
+    "NOTHING",
+]
 
 import builtins as _builtins
 
@@ -43,6 +53,11 @@ def other_public():
 
 
 nosig = _builtins.vars
+
+
+PI = 3.14159
+LIMIT = 10
+NOTHING = None
 
 
 class MyClass:
@@ -128,6 +143,7 @@ def test_split_markdown_by_headings() -> None:
     md = (
         "# Title\n\nIntro paragraph text.\n\n"
         "## Section A\n\nAlpha content.\n\n"
+        "```python\n# not a heading\nx = 1\n```\n\n"
         "## Section B\n\nBeta content.\n"
     )
     pieces = split_markdown(md, max_chars=800, overlap=100)
@@ -138,19 +154,40 @@ def test_split_markdown_by_headings() -> None:
     assert any("Section B" in p and "Beta content." in p for p in pieces)
     assert any("Title" in p and "Intro paragraph text." in p for p in pieces)
 
+    # A "#" line inside a fenced code block is NOT a heading: the piece that
+    # holds it also carries its section heading and the following code line,
+    # and no piece starts with that in-fence line.
+    fenced = [p for p in pieces if "# not a heading" in p]
+    assert fenced, "expected a piece containing the in-fence comment"
+    for piece in fenced:
+        assert "Section A" in piece
+        assert "x = 1" in piece
+    assert not any(p.startswith("# not a heading") for p in pieces)
+
 
 def test_split_markdown_overlap() -> None:
-    body = "word " * 200  # one long line of repeated tokens
+    # Distinct tokens (so a shared token is only possible via real overlap),
+    # enough of them to force several pieces.
+    body = " ".join(f"tok{i:03d}" for i in range(200))
     md = "# H\n\n" + body
-    pieces = split_markdown(md, max_chars=120, overlap=40)
-    assert len(pieces) >= 2
-    # Strip the shared heading prefix, then the tail of one piece reappears
-    # at the head of the next (the overlap region).
     prefix = "# H\n\n"
-    bodies = [p[len(prefix) :] for p in pieces]
-    for i in range(len(bodies) - 1):
-        tail = bodies[i][-12:]
-        assert tail in bodies[i + 1], f"missing overlap between pieces {i} and {i + 1}"
+
+    def tokens_of(piece: str) -> set[str]:
+        return set(piece[len(prefix) :].split())
+
+    # overlap=40: consecutive pieces share at least one full token.
+    pieces = split_markdown(md, max_chars=120, overlap=40)
+    assert len(pieces) >= 3
+    for i in range(len(pieces) - 1):
+        shared = tokens_of(pieces[i]) & tokens_of(pieces[i + 1])
+        assert shared, f"no shared token between pieces {i} and {i + 1}"
+
+    # overlap=0: consecutive pieces share NO tokens.
+    pieces0 = split_markdown(md, max_chars=120, overlap=0)
+    assert len(pieces0) >= 3
+    for i in range(len(pieces0) - 1):
+        shared = tokens_of(pieces0[i]) & tokens_of(pieces0[i + 1])
+        assert not shared, f"unexpected shared token at {i} with overlap=0"
 
 
 def test_split_markdown_empty_and_whitespace() -> None:
@@ -218,6 +255,10 @@ def test_introspection_thrownaway_package(mymod) -> None:
     # Signature fallback "(...)" for the builtin with no introspectable sig.
     nosig = next(c for c in chunks if c.metadata["qualname"] == "mymod.nosig")
     assert "(...)" in nosig.text
+    # Plain constants are never turned into chunks.
+    assert "mymod.PI" not in names
+    assert "mymod.LIMIT" not in names
+    assert "mymod.NOTHING" not in names
 
 
 def test_introspection_broken_attribute_does_not_abort(mymod) -> None:
@@ -250,23 +291,35 @@ def test_text_file_loader_nested(tmp_path: Path) -> None:
     (root / "sub" / "b.md").write_bytes(b"# Beta\r\n\r\nBeta body with CRLF.\r\n")
     # A non-ASCII file, written explicitly as UTF-8 bytes.
     (root / "c.txt").write_bytes("Café notes with émoji.\n".encode("utf-8"))  # noqa: UP012
+    # A BOM-prefixed file, written explicitly as bytes.
+    (root / "sub" / "gamma.md").write_bytes(b"\xef\xbb\xbf# Gamma\n\nGamma body.\n")
 
     chunks = list(iter_text_file_chunks(root))
     assert chunks
-    # Every chunk has forward-slash source_path and no backslashes.
+    # source_path is root-relative with forward slashes (no drive, no leading /).
+    paths = {c.metadata["source_path"] for c in chunks}
+    assert {"a.md", "sub/b.md", "c.txt", "sub/gamma.md"} <= paths
     for c in chunks:
-        assert "\\" not in c.metadata["source_path"]
+        sp = c.metadata["source_path"]
+        assert not sp.startswith("/")
+        assert "\\" not in sp
         assert c.metadata["source_type"] == "text_file"
         assert c.metadata["kind"] == "text"
 
-    # The CRLF file and the non-ASCII file each contributed content.
+    # The CRLF, non-ASCII, and BOM files each contributed content.
     texts = " ".join(c.text for c in chunks)
     assert "Beta body with CRLF." in texts
     assert "Café" in texts
+    # The BOM is dropped: no U+FEFF survives in any chunk text.
+    assert not any("\ufeff" in c.text for c in chunks)
+    assert any(c.text.startswith("# Gamma") for c in chunks)
 
-    # ids are stable across two runs over the same tree.
+    # ids depend on the root-relative path, so copying the tree to a new
+    # location yields identical ids.
+    dest = tmp_path / "docs_copy"
+    shutil.copytree(root, dest)
     ids_a = [c.id for c in iter_text_file_chunks(root)]
-    ids_b = [c.id for c in iter_text_file_chunks(root)]
+    ids_b = [c.id for c in iter_text_file_chunks(dest)]
     assert ids_a == ids_b
     assert len(set(ids_a)) == len(ids_a)
 
