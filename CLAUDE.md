@@ -54,7 +54,8 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 
 ## Conventions
 - **One task per session.** Read `docs/PLAN.md` for the current task, do only that task, never start the next one.
-- **Quota- and CPU-friendly tooling**: every tool call costs free-model quota. Run pytest in the foreground as ONE process (timeout up to 10 minutes) — never in the background, never two heavy python/pytest processes at once, never poll with sleep loops. Normal full-suite runtime is roughly 30–90 s (the dependency-import test loads torch); if a run exceeds ~3 minutes, stop and investigate (duplicate or stuck python processes) instead of waiting. Never kill processes you didn't start — ask me.
+- **Quota- and CPU-friendly tooling**: every tool call costs free-model quota. Run pytest in the foreground as ONE process (timeout up to 10 minutes) — never in the background, never two heavy python/pytest processes at once, never poll with sleep loops. The default (non-slow) suite must stay fast (target < 60 s) because default tests never import torch, sentence-transformers, or langchain-huggingface; real heavy imports live only in `slow` tests. If any command runs longer than ~3 minutes, stop and ask instead of waiting. Never kill processes you didn't start — ask me.
+- **Lazy heavy imports**: never import torch, sentence_transformers, transformers, or langchain_huggingface at module top level; import them inside the function/method that needs them (and resolve the class through a tiny factory function that tests can monkeypatch) so unit tests using fakes stay fast. Import chromadb inside `VectorStore.__init__` for the same reason.
 - **Tests are first-class**: every task ships tests; `pytest -q` and `ruff check .` must be green before committing. Unit tests must never hit the network or a real LLM — use `tests/fakes.py` (`FakeChatModel`, `ScriptedLLM`) and `FakeEmbedder`.
 - **LLM access only through `evalcode.llm.LLMClient` / the `TextLLM` protocol.** Nodes must never import or call `ChatOpenAI` directly. Backoff, throttling, and the per-run call budget live there.
 - **Protect the free quota**: don't add LLM calls casually; optional LLM calls (`ANALYZE_WITH_LLM`, `QUERY_REWRITE_WITH_LLM`) stay off by default; `live` tests must use the fewest calls possible; never loop on LLM calls without a budget.
@@ -81,7 +82,8 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 1 (bdbba70): `.env` + python-dotenv setup and the config module (`config.py`, `errors.py`, full `.env.example`, 8 config tests).
 - Housekeeping (27782b7): autouse env-isolation fixture in `tests/conftest.py`, test-name fix, compact status format, tag-literal-safety conventions.
 - Task 2 (97c1f2b): doc loaders & chunking — `rag/types.py`, `rag/chunking.py`, `rag/loaders.py` (`DocChunk`, `stable_id`, `truncate_text`, `split_markdown`, `iter_introspection_chunks`, `iter_text_file_chunks`); 12 new tests.
-- Task 2 fix-up: skip non-callable constants, root-relative text-file paths, BOM-safe (`utf-8-sig`) decoding, fence-aware headings; test count unchanged (22).
+- Task 2 fix-up (b951075): skip non-callable constants, root-relative text-file paths, BOM-safe (`utf-8-sig`) decoding, fence-aware headings; test count unchanged (22).
+- Task 2 fix-up 2 (this commit): index C-implemented class methods (method/builtin/classmethod descriptors); default test suite no longer imports heavy packages (install check + `find_spec`); test count unchanged (22).
 
 ### Latest milestone (Task 2)
 - `src/evalcode/rag/types.py`: pydantic `DocChunk` (`id`, `text`, `metadata: dict[str, str|int|float|bool]`); required metadata keys: `library`, `version`, `qualname`, `kind` (module|function|class|method|text), `import_path`, `source_type` (introspection|text_file), plus `source_path` for text files.
@@ -89,7 +91,8 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - `src/evalcode/rag/loaders.py`: `iter_introspection_chunks(library, *, max_chars=1000, include_private=False)` (importlib + `importlib.metadata` version, stdlib→"stdlib"; `__all__` else non-underscore names; one chunk per function/class/method with the signature line first and docstring truncated to fit; a class chunk lists its method names; re-exports deduped by `id()`; submodules skipped; a broken attribute is logged and skipped, never fatal) and `iter_text_file_chunks(path, *, library=None, max_chars=800, overlap=100)` (file or dir of `.md/.rst/.txt`; UTF-8 with `errors="replace"` + warning; forward-slash `source_path`; id = path + chunk index + content hash).
 - Signature/char deviation: chunk text is `"{import_path}.{name(params)}\n\n{doc}"` (dotted name + params on the signature line, import_path captured in metadata) rather than a raw `import_path + signature` concatenation, to avoid a doubled module prefix.
 - Fix-ups: non-callable constants (e.g. `datetime.MINYEAR`/`UTC`) no longer yield chunks; text-file `source_path`/`qualname`/id are root-relative (file name for a single file); text files decode as `utf-8-sig` (BOM dropped); headings are not detected inside fenced code blocks.
-- `pytest -q` → 22 passed (unchanged; no live/slow tests yet). `ruff check .` and `ruff format --check .` clean.
+- Fix-up 2: C-implemented class methods are now indexed (`_public_methods` accepts `MethodDescriptorType`/`BuiltinFunctionType`/`ClassMethodDescriptorType` via `inspect.getattr_static`), so e.g. `datetime`/`collections`/`re` yield method chunks; `test_scaffold` checks installs via `importlib.metadata.version` + `importlib.util.find_spec` (no heavy imports) so the default suite is fast.
+- `pytest -q` → 22 passed and fast (< 60 s default; heavy imports only in `slow`). `ruff check .` and `ruff format --check .` clean.
 
 ### Not started
 Task 3 onward.

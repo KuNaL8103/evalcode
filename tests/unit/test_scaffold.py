@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
+import importlib.util
 
 
 def test_package_exposes_version() -> None:
@@ -12,8 +14,36 @@ def test_package_exposes_version() -> None:
 
 
 def test_core_dependencies_import() -> None:
-    """All runtime dependencies from pyproject.toml are importable."""
-    for module_name in [
+    """All runtime dependencies from pyproject.toml are installed and located.
+
+    This deliberately does NOT import the heavy packages (torch,
+    sentence-transformers, langchain-huggingface): real imports of those are
+    exercised by the ``slow`` tests that start in Task 3. Here we only check
+    that each distribution is installed (``importlib.metadata.version``) and
+    that its import target can be found (``importlib.util.find_spec``) without
+    running any of it.
+    """
+    distributions = [
+        "langgraph",
+        "langgraph-checkpoint-sqlite",
+        "langchain-core",
+        "langchain-openai",
+        "langchain-huggingface",
+        "sentence-transformers",
+        "openai",
+        "chromadb",
+        "python-dotenv",
+        "pydantic",
+        "pydantic-settings",
+        "typer",
+        "rich",
+        "pyyaml",
+        "torch",
+    ]
+    for dist in distributions:
+        importlib.metadata.version(dist)  # raises PackageNotFoundError if missing
+
+    import_names = [
         "langgraph",
         "langchain_openai",
         "langchain_huggingface",
@@ -23,5 +53,6 @@ def test_core_dependencies_import() -> None:
         "dotenv",
         "typer",
         "rich",
-    ]:
-        assert importlib.import_module(module_name) is not None
+    ]
+    for name in import_names:
+        assert importlib.util.find_spec(name) is not None, f"cannot locate {name!r}"

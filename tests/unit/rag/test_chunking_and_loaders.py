@@ -220,7 +220,7 @@ def test_split_markdown_respects_max_chars() -> None:
 
 def test_introspection_json_loads() -> None:
     chunks = list(iter_introspection_chunks("json"))
-    assert chunks
+    assert len(chunks) == 12  # json still yields exactly 12 chunks
     by_name = {c.metadata["qualname"]: c for c in chunks}
     assert "json.loads" in by_name
     loads = by_name["json.loads"]
@@ -230,6 +230,23 @@ def test_introspection_json_loads() -> None:
     assert loads.metadata["kind"] == "function"
     assert loads.metadata["library"] == "json"
     assert loads.metadata["source_type"] == "introspection"
+
+    # C-implemented class methods are indexed as method chunks whose text
+    # starts with their dotted name.
+    dt = {c.metadata["qualname"]: c for c in iter_introspection_chunks("datetime")}
+    for qual in ("datetime.datetime.strptime", "datetime.timedelta.total_seconds"):
+        assert qual in dt, qual
+        assert dt[qual].metadata["kind"] == "method"
+        assert dt[qual].text.startswith(qual)
+
+    col = {c.metadata["qualname"]: c for c in iter_introspection_chunks("collections")}
+    assert "collections.deque.appendleft" in col
+    assert col["collections.deque.appendleft"].metadata["kind"] == "method"
+
+    # Every introspection chunk (json, datetime, collections) stays bounded.
+    for c in list(chunks) + list(dt.values()) + list(col.values()):
+        assert len(c.text) <= 1000, f"chunk too long: {c.metadata['qualname']}"
+
     # A missing library logs a warning and yields nothing, no exception.
     assert list(iter_introspection_chunks("no_such_module_xyz")) == []
 

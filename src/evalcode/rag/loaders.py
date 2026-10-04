@@ -19,6 +19,7 @@ import importlib
 import importlib.metadata
 import inspect
 import logging
+import types
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -30,6 +31,16 @@ __all__ = ["iter_introspection_chunks", "iter_text_file_chunks"]
 logger = logging.getLogger(__name__)
 
 _TEXT_SUFFIXES = {".md", ".rst", ".txt"}
+
+# Member types that count as a class method, including C-implemented ones.
+# Properties, nested classes, and plain data attributes are intentionally
+# excluded because their static value is none of these types.
+_METHOD_TYPES = (
+    types.FunctionType,
+    types.BuiltinFunctionType,
+    types.MethodDescriptorType,
+    types.ClassMethodDescriptorType,
+)
 
 
 # --- Introspection loader --------------------------------------------------
@@ -111,10 +122,12 @@ def _class_chunks(
 
     # One chunk per public method, named ``Class.method``.
     for mname in methods:
+        # Prefer the live value (bound / C method); fall back to the static
+        # member if live access fails.
         try:
-            mobj = _unwrap_method(cls, mname)
+            mobj = getattr(cls, mname)
         except Exception:
-            continue
+            mobj = _unwrap_method(cls, mname)
         if mobj is None:
             continue
         mdoc = inspect.getdoc(mobj) or ""
@@ -189,14 +202,34 @@ def _unwrap_method(cls, mname: str):
 
 
 def _public_methods(cls, include_private: bool) -> list[str]:
+    """Public method names defined on ``cls`` itself, incl. C-implemented ones.
+
+    A member counts as a method when its own-namespace value is a Python
+    function, a built-in function, a method descriptor, a class-method
+    descriptor, or a ``classmethod`` / ``staticmethod`` wrapper. This catches
+    C-implemented methods (e.g. ``datetime.timedelta.total_seconds``) that
+    ``inspect.isfunction`` misses, while excluding properties, nested classes,
+    plain data attributes, and methods merely *inherited* from a generic base
+    (e.g. ``BaseException.add_note`` on an error subclass) by looking only at
+    the class's own namespace rather than ``dir(cls)``.
+    """
     methods: list[str] = []
-    for mname in dir(cls):
+    try:
+        own = vars(cls)
+    except TypeError:
+        return methods
+    for mname in own:
         if mname.startswith("__") and mname.endswith("__"):
             continue
         if mname.startswith("_") and not include_private:
             continue
-        val = _unwrap_method(cls, mname)
-        if inspect.isfunction(val):
+        try:
+            raw = inspect.getattr_static(cls, mname)
+        except Exception:
+            raw = own[mname]
+        if isinstance(raw, (classmethod, staticmethod)):
+            raw = raw.__func__
+        if isinstance(raw, _METHOD_TYPES):
             methods.append(mname)
     return methods
 
