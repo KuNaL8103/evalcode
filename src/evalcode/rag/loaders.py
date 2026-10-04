@@ -202,36 +202,52 @@ def _unwrap_method(cls, mname: str):
 
 
 def _public_methods(cls, include_private: bool) -> list[str]:
-    """Public method names defined on ``cls`` itself, incl. C-implemented ones.
+    """Public method names on ``cls`` or inherited from a Python base class.
 
-    A member counts as a method when its own-namespace value is a Python
+    For each non-dunder name in ``dir(cls)``, the *owner* is the first class
+    in ``cls.__mro__`` whose own namespace holds the name. The member counts
+    as a method when the owner's raw value (``vars(owner)[name]``) is a Python
     function, a built-in function, a method descriptor, a class-method
-    descriptor, or a ``classmethod`` / ``staticmethod`` wrapper. This catches
-    C-implemented methods (e.g. ``datetime.timedelta.total_seconds``) that
-    ``inspect.isfunction`` misses, while excluding properties, nested classes,
-    plain data attributes, and methods merely *inherited* from a generic base
-    (e.g. ``BaseException.add_note`` on an error subclass) by looking only at
-    the class's own namespace rather than ``dir(cls)``.
+    descriptor, or a ``classmethod`` / ``staticmethod`` wrapper. Members whose
+    owner lives in the ``builtins`` module (``object``, ``BaseException``,
+    ``dict``, ...) are skipped unless defined on ``cls`` itself, so an error
+    subclass does not re-index ``add_note`` / ``with_traceback``; methods
+    inherited from ordinary Python bases (``PurePath.with_suffix`` on
+    ``Path``) are kept.
     """
     methods: list[str] = []
     try:
-        own = vars(cls)
-    except TypeError:
+        names = dir(cls)
+        mro = cls.__mro__
+    except Exception:
         return methods
-    for mname in own:
+    for mname in names:
         if mname.startswith("__") and mname.endswith("__"):
             continue
         if mname.startswith("_") and not include_private:
             continue
+        owner = _mro_owner(mro, mname)
+        if owner is None:
+            continue
+        if owner is not cls and getattr(owner, "__module__", None) == "builtins":
+            continue
         try:
-            raw = inspect.getattr_static(cls, mname)
+            raw = vars(owner)[mname]
         except Exception:
-            raw = own[mname]
+            continue
         if isinstance(raw, (classmethod, staticmethod)):
             raw = raw.__func__
         if isinstance(raw, _METHOD_TYPES):
             methods.append(mname)
     return methods
+
+
+def _mro_owner(mro, mname: str):
+    """First class in ``mro`` whose own namespace contains ``mname``."""
+    for base in mro:
+        if mname in vars(base):
+            return base
+    return None
 
 
 def _public_names(module, include_private: bool) -> list[str]:

@@ -17,8 +17,9 @@ from evalcode.rag.chunking import split_markdown, stable_id, truncate_text
 from evalcode.rag.loaders import iter_introspection_chunks, iter_text_file_chunks
 from evalcode.rag.types import DocChunk
 
-# Throwaway package exercising __all__, privacy, classes/methods, a signature
-# fallback, a re-export dedupe, a broken attribute, and plain constants.
+# Throwaway package exercising __all__, privacy, classes/methods, inherited
+# methods, a signature fallback, a re-export dedupe, a broken attribute, and
+# plain constants.
 _PACKAGE_SRC = '''
 __all__ = [
     "public_func",
@@ -29,6 +30,9 @@ __all__ = [
     "PI",
     "LIMIT",
     "NOTHING",
+    "Base",
+    "Child",
+    "Err",
 ]
 
 import builtins as _builtins
@@ -72,6 +76,22 @@ class MyClass:
 
     def _secret(self):
         return 1
+
+
+class Base:
+    def inherited(self):
+        """Inherited doc."""
+        return 1
+
+
+class Child(Base):
+    def own(self):
+        """Own doc."""
+        return 2
+
+
+class Err(ValueError):
+    """Custom error."""
 
 
 def __getattr__(name):
@@ -243,6 +263,13 @@ def test_introspection_json_loads() -> None:
     assert "collections.deque.appendleft" in col
     assert col["collections.deque.appendleft"].metadata["kind"] == "method"
 
+    # Methods inherited from a Python base class are indexed under the
+    # concrete class (PurePath.with_suffix on pathlib.Path).
+    pl = {c.metadata["qualname"]: c for c in iter_introspection_chunks("pathlib")}
+    assert "pathlib.Path.with_suffix" in pl
+    assert pl["pathlib.Path.with_suffix"].metadata["library"] == "pathlib"
+    assert pl["pathlib.Path.with_suffix"].metadata["kind"] == "method"
+
     # Every introspection chunk (json, datetime, collections) stays bounded.
     for c in list(chunks) + list(dt.values()) + list(col.values()):
         assert len(c.text) <= 1000, f"chunk too long: {c.metadata['qualname']}"
@@ -269,6 +296,13 @@ def test_introspection_thrownaway_package(mymod) -> None:
     # Re-export deduped: public_func indexed once, alias contributes no chunk.
     assert len([c for c in chunks if c.metadata["qualname"] == "mymod.public_func"]) == 1
     assert "mymod.alias_of_public" not in names
+    # Methods inherited from a Python base are indexed on the subclass,
+    # alongside methods defined on the subclass itself.
+    assert "mymod.Child.own" in names
+    assert "mymod.Child.inherited" in names
+    # Members inherited from builtins bases are NOT re-indexed.
+    assert "mymod.Err.add_note" not in names
+    assert "mymod.Err.with_traceback" not in names
     # Signature fallback "(...)" for the builtin with no introspectable sig.
     nosig = next(c for c in chunks if c.metadata["qualname"] == "mymod.nosig")
     assert "(...)" in nosig.text
