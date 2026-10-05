@@ -128,6 +128,10 @@ def test_extract_usage_and_strip_reasoning() -> None:
     assert strip_reasoning(f"{open_tag}reasoning here{close_tag}final answer") == "final answer"
     assert strip_reasoning(f"prefix {open_tag}never closed") == "prefix"
     assert strip_reasoning(f"{open_tag}a{close_tag}mid{open_tag}b{close_tag}") == "mid"
+    # stray closing tag with no opening tag → drop through the LAST closing tag
+    assert strip_reasoning(f"prefix {close_tag}suffix kept") == "suffix kept"
+    assert strip_reasoning(f"{close_tag}only close") == "only close"
+    assert strip_reasoning(f"a {close_tag}b {close_tag}c") == "c"
     assert strip_reasoning("plain text") == "plain text"
     assert strip_reasoning("") == ""
 
@@ -236,6 +240,14 @@ def test_daily_limit_429_fails_fast_without_retries() -> None:
         assert len(chat.calls) == 1  # ZERO retries
         assert sleep.calls == []
 
+    # A 200-with-error body (ValueError from langchain_openai) carrying the
+    # real daily text → same fail-fast, zero retries.
+    client, chat, sleep = make_client([ValueError(bodies[0]), ok_message()])
+    with pytest.raises(DailyQuotaExceeded):
+        client.invoke_text([HumanMessage(content="hi")])
+    assert len(chat.calls) == 1
+    assert sleep.calls == []
+
 
 def test_transient_5xx_and_connection_errors_are_retried() -> None:
     script = [
@@ -294,6 +306,17 @@ def test_empty_response_retried_then_succeeds() -> None:
     assert sleep.calls == [2.0, 4.0]
     assert client.stats["api_retries"] == 2
 
+    # Malformed HTTP-200 bodies raised by langchain_openai itself (chat_models/
+    # base.py): ValueError for an "error" field, TypeError for null "choices".
+    malformed = ValueError({"error": {"message": "upstream error"}})
+    null_choices = TypeError("Received response with null value for 'choices'.")
+    client, chat, sleep = make_client([malformed, null_choices, ok_message("ok")])
+    response = client.invoke_text([HumanMessage(content="hi")])
+    assert response.text == "ok"
+    assert len(chat.calls) == 3
+    assert sleep.calls == [2.0, 4.0]
+    assert client.stats["api_retries"] == 2
+
 
 def test_retries_exhausted_raise_unavailable() -> None:
     settings = make_settings(llm_max_api_retries=2)
@@ -307,6 +330,26 @@ def test_retries_exhausted_raise_unavailable() -> None:
     assert sleep.calls == [2.0, 4.0]
     assert client.stats["api_retries"] == 2
     assert excinfo.value.__cause__ is not None  # chains the last openai error
+    assert "limit 2 per call" in str(excinfo.value)
+
+    # The limit is PER logical call: two consecutive calls each get a fresh
+    # retry budget (a cumulative counter would fail the second call instantly).
+    client2, chat2, sleep2 = make_client(
+        [
+            make_status_error(503),
+            make_status_error(503),
+            ok_message("first"),
+            make_status_error(503),
+            make_status_error(503),
+            ok_message("second"),
+        ],
+        settings=settings,
+    )
+    assert client2.invoke_text([HumanMessage(content="one")]).text == "first"
+    assert client2.invoke_text([HumanMessage(content="two")]).text == "second"
+    assert len(chat2.calls) == 6
+    assert sleep2.calls == [2.0, 4.0, 2.0, 4.0]
+    assert client2.stats["api_retries"] == 4
 
 
 def test_budget_reset_and_throttle() -> None:

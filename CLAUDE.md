@@ -89,7 +89,8 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 3 pre-work (8f4a18d): `_public_methods` walks `dir(cls)`/MRO, so methods inherited from Python base classes are indexed (e.g. `pathlib.Path.with_suffix`), while members inherited from builtins bases (`BaseException.add_note`) stay skipped; json still yields exactly 12 chunks; test count unchanged (22).
 - Task 3 (f03e7ea): embeddings, Chroma store, retriever, ingest (`rag/embeddings,store,retriever,ingest` + `RetrievedDoc`); 10 new tests + 1 slow.
 - Task 3b (8a09984): retrieval-quality tuning — `_clean_signature`, `DocChunk.embed_text` (compact embedding input), probe script; test count unchanged (32).
-- Task 4 (see git log): state schema & OpenRouter LLM client — `state.py`, `llm.py` (backoff, rate-limit, budget), LLM error hierarchy, `tests/fakes.py`; 14 new tests (46).
+- Task 4 (4c54c9e): state schema & OpenRouter LLM client — `state.py`, `llm.py` (backoff, rate-limit, budget), LLM error hierarchy, `tests/fakes.py`; 14 new tests (46).
+- Task 4 fix-up (see git log): per-call API retry limit, close-only reasoning strip, malformed-response retry; test count unchanged (46).
 
 ### Latest milestone (Task 4 — state schema & OpenRouter LLM client)
 - `state.py`: exact §3.2 schemas (`TokenUsage`, `RunFailure`, `RunResult`, `ErrorAnalysis`, `StepEvent`, `AgentState`), `merge_usage` reducer (None/missing-tolerant), `utc_now_iso`; reuses `RetrievedDoc` from `rag.types`.
@@ -99,6 +100,8 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Slug verification: `qwen/qwen3.8-27b:free` **exists** in the public `https://openrouter.ai/api/v1/models` list (466 models) → default kept. Step 6b skipped: no `OPENROUTER_API_KEY` in `.env`.
 - Versions: langchain-openai 1.6.7, openai 3.24.0, langchain-core 1.6.6. ChatOpenAI accepts kwargs `model/base_url/api_key/timeout` (stored as `model_name`/`openai_api_base`/`openai_api_key`/`request_timeout`).
 - `pytest -q` → 46 passed, 1 slow deselected; ruff check + format clean.
+- Task 4 fix-up: API retry limit is now **per logical call** (`_retry_backoff` gates on `attempt`; `stats.api_retries` stays cumulative), `strip_reasoning` also drops close-only think fragments, and malformed HTTP-200 bodies (langchain_openai's `ValueError` on an `error` field / `TypeError` on null `choices`) fail fast to `DailyQuotaExceeded` on daily-limit text, else retry with backoff.
+- Live check (fix-up session): 1 real call via `build_llm_client()` → text `ready`, `qwen/qwen3.8-27b:free`, 81 tokens, 0 retries, 1 request. Note: `.env` `LLM_MODEL` is `thinkingmachines/inkling:free`, which OpenRouter 403s for non-agentic-harness clients; the default slug works.
 
 ### Not started
 Task 5 onward.

@@ -100,11 +100,17 @@ class TextLLM(Protocol):
 
 
 def strip_reasoning(text: str) -> str:
-    """Remove reasoning-model ``<think>…</think>`` blocks (closed or unterminated)."""
+    """Remove reasoning-model ``<think>…</think>`` blocks (closed,
+    unterminated, or stray closing tag with no opening tag)."""
     if not text:
         return text
     text = _THINK_BLOCK_RE.sub("", text)
     text = _THINK_TRAILING_RE.sub("", text)
+    # A stray closing tag with no opening tag: drop everything up to and
+    # including the LAST closing tag.
+    if THINK_OPEN not in text and THINK_CLOSE in text:
+        cut = text.rfind(THINK_CLOSE)
+        text = text[cut + len(THINK_CLOSE) :]
     return text.strip()
 
 
@@ -247,6 +253,18 @@ class LLMClient:
             except EmptyResponseError as exc:
                 last_error = exc
                 delay = self._retry_backoff(attempt, purpose, "empty response", exc)
+            except (TypeError, ValueError) as exc:
+                # langchain_openai raises these for malformed HTTP-200 bodies:
+                # ValueError when the body carries an "error" field, TypeError
+                # when "choices" is null (chat_models/base.py::_create_chat_result).
+                last_error = exc
+                text = str(exc)
+                if any(kw in text.lower() for kw in _DAILY_LIMIT_KEYWORDS):
+                    raise DailyQuotaExceeded(
+                        f"OpenRouter response indicates the daily free quota is exhausted "
+                        f"({text[:160]}). Wait for the quota to reset (or add credits)."
+                    ) from exc
+                delay = self._retry_backoff(attempt, purpose, "malformed response", exc)
 
             attempt += 1
             self._api_retries += 1
@@ -255,7 +273,7 @@ class LLMClient:
             logger.warning(
                 "OpenRouter call failed (%s); retry %d/%d in %.1fs (purpose=%s)",
                 _short_reason(last_error),
-                self._api_retries,
+                attempt,
                 settings.llm_max_api_retries,
                 delay,
                 purpose,
@@ -333,13 +351,18 @@ class LLMClient:
         *,
         minimum_wait: float = 0.0,
     ) -> float:
-        """Exponential backoff + jitter, capped; raises when retries are exhausted."""
+        """Exponential backoff + jitter, capped per logical call.
+
+        ``attempt`` counts failed attempts *within this call*; ``self._api_retries``
+        is only a lifetime statistic and must never gate retries.
+        """
         settings = self._settings
-        if self._api_retries >= settings.llm_max_api_retries:
+        if attempt >= settings.llm_max_api_retries:
             raise LLMUnavailable(
-                f"OpenRouter request failed after {self._api_retries} retries "
-                f"(last: {reason}). Model '{settings.llm_model}' may be temporarily "
-                "unavailable — retry the run later."
+                f"OpenRouter request failed after {attempt} retries "
+                f"(limit {settings.llm_max_api_retries} per call; last: {reason}). "
+                f"Model '{settings.llm_model}' may be temporarily unavailable — "
+                "retry the run later."
             ) from cause
         base_delay = min(settings.llm_backoff_max_s, settings.llm_backoff_base_s * (2**attempt))
         delay = base_delay * self._rng()
@@ -390,6 +413,8 @@ def _short_reason(exc: Exception) -> str:
         return f"HTTP {exc.status_code}"
     if isinstance(exc, EmptyResponseError):
         return "empty response"
+    if isinstance(exc, (TypeError, ValueError)):
+        return "malformed response"
     return type(exc).__name__
 
 
