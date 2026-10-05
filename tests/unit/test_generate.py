@@ -266,6 +266,10 @@ def test_generate_node_reask_and_failures() -> None:
     assert "reply_head" in update["history"][0]["summary"]
     assert update["history"][0]["summary"]["reply_head"]
     assert "parse_reason" in update["history"][0]["summary"]
+    assert (
+        "no code" in update["history"][0]["summary"]["parse_reason"]
+        or "ParseError" in update["history"][0]["summary"]["parse_reason"]
+    )
     assert update["token_usage"]["llm_calls"] == 2  # the re-ask counts too
 
     # (b) bad twice -> failed update, never an exception.
@@ -275,6 +279,10 @@ def test_generate_node_reask_and_failures() -> None:
     assert "parseable" in update2["failure_reason"]
     assert "reply_head" in update2["history"][0]["summary"]
     assert "parse_reason" in update2["history"][0]["summary"]
+    assert (
+        "no code" in update2["history"][0]["summary"]["parse_reason"]
+        or "ParseError" in update2["history"][0]["summary"]["parse_reason"]
+    )
     assert update2["history"][0]["summary"]["error"] == "ParseError"
     assert update2["history"][0]["summary"]["reasks"] == 1
     assert "reply_head" in update2["history"][0]["summary"]

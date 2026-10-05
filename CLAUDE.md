@@ -91,14 +91,14 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 3b (8a09984): retrieval-quality tuning — `_clean_signature`, `DocChunk.embed_text` (compact embedding input), probe script; test count unchanged (32).
 - Task 4 (4c54c9e): state schema & OpenRouter LLM client — `state.py`, `llm.py` (backoff, rate-limit, budget), LLM error hierarchy, `tests/fakes.py`; 14 new tests (46).
 - Task 4 fix-up (39e2543): per-call API retry limit, close-only reasoning strip, malformed-response retry; test count unchanged (46).
-- Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing (next-tag termination), reply_head / parse_reason diagnostics in generate node and live test; live: slug 404, diagnostics code verified; 56 passed.
+- Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing, reply_head / parse_reason diagnostics; live: 404 (slug removed), no reply received, tokens 0, LLM_MAX_TOKENS 8192; 56 passed.
 - Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 
 ### Latest milestone (Task 5 — prompts, response parser, generate node)
 - `prompts.py`: `GENERATE_SYSTEM` (strict tagged-format rules, compact for free-tier quotas), `FORMAT_REMINDER` (strict re-ask), `build_generate_messages` (task + capped doc context + PROVIDED TESTS instruction), `format_context` (whole-block truncation that accounts for the join separator, total ≤ `context_max_chars`).
 - `parsing.py`: `parse_bundle` (case-insensitive tags, whitespace, fences inside tags, missing closing tag at end, surrounding prose, defensive re-`strip_reasoning`; fenced-block fallback when `<code>` is absent; `ParseError` only when code — or required tests — is truly unrecoverable) + reusable `parse_tagged`.
 - `schemas.py`: pydantic `CodeBundle {explanation, code, tests, docs_used}`, `extract_imports` (ast top-level module names, first-seen order, syntax errors → []).
-- `nodes/generate.py`: `make_generate_node(llm, settings)` — one re-ask on `ParseError`; any `LLMError` on a mandatory call → `status="failed"` + actionable `failure_reason` (never a crash; failed updates carry only successful-call usage); history `StepEvent` summary `{code_chars, tests_chars, doc_ids, docs_used, imports, reasks}`; input state never mutated.
+- `nodes/generate.py`: `make_generate_node` adds `reply_head` (first 200 chars, ASCII-safe) and `ParseError` reason to history on both re-ask and final failure; live 404 (slugs removed upstream) — no reply, 0 tokens, reply_head/reason N/A; `LLM_MAX_TOKENS` = 8192.
 - `tests/fakes.py`: `ScriptedLLM` (`TextLLM` fake: scripted texts/exceptions, records `.calls`/`.purposes`, fake usage) + `bundle_text` (renders the tagged format).
 - Housekeeping: 403 now says access denied / key-lacks-access / model-restricted-to-specific-clients (points at `LLM_MODEL`, includes first 160 body chars); 401 keeps the key message; 403 assertion adjusted inside the existing `test_auth_errors_fail_fast`.
 - `pytest -q` → 56 passed (46 + 10 new), 2 deselected (1 live, 1 slow); ruff check + format clean; tag-literal + round-trip snippet verified.
