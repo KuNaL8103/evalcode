@@ -268,8 +268,9 @@ def test_transient_5xx_and_connection_errors_are_retried() -> None:
 
 
 def test_auth_errors_fail_fast() -> None:
-    # 401 / 403 → auth error mentioning the env var; 402 → hint about credits
-    cases = ((401, "OPENROUTER_API_KEY"), (403, "OPENROUTER_API_KEY"), (402, "credits"))
+    # 401 → key hint; 403 → access may be model-restricted, so point at LLM_MODEL;
+    # 402 → hint about credits
+    cases = ((401, "OPENROUTER_API_KEY"), (403, "LLM_MODEL"), (402, "credits"))
     for status, hint in cases:
         client, chat, sleep = make_client([make_status_error(status)])
         with pytest.raises(LLMAuthError) as excinfo:

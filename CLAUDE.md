@@ -90,18 +90,19 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 3 (f03e7ea): embeddings, Chroma store, retriever, ingest (`rag/embeddings,store,retriever,ingest` + `RetrievedDoc`); 10 new tests + 1 slow.
 - Task 3b (8a09984): retrieval-quality tuning — `_clean_signature`, `DocChunk.embed_text` (compact embedding input), probe script; test count unchanged (32).
 - Task 4 (4c54c9e): state schema & OpenRouter LLM client — `state.py`, `llm.py` (backoff, rate-limit, budget), LLM error hierarchy, `tests/fakes.py`; 14 new tests (46).
-- Task 4 fix-up (see git log): per-call API retry limit, close-only reasoning strip, malformed-response retry; test count unchanged (46).
+- Task 4 fix-up (39e2543): per-call API retry limit, close-only reasoning strip, malformed-response retry; test count unchanged (46).
+- Task 5 (see git log): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 
-### Latest milestone (Task 4 — state schema & OpenRouter LLM client)
-- `state.py`: exact §3.2 schemas (`TokenUsage`, `RunFailure`, `RunResult`, `ErrorAnalysis`, `StepEvent`, `AgentState`), `merge_usage` reducer (None/missing-tolerant), `utc_now_iso`; reuses `RetrievedDoc` from `rag.types`.
-- `errors.py`: `LLMError` hierarchy — `LLMAuthError`, `LLMModelError`, `LLMRequestError`, `DailyQuotaExceeded`, `LLMUnavailable`, `LLMBudgetExceeded`, internal retryable `EmptyResponseError`; actionable messages, no key material.
-- `llm.py`: `get_chat_model` (`max_retries=0`, `default_headers={"X-Title": "evalcode"}`), `LLMResponse`, `TextLLM` protocol, `LLMClient` (throttle, budget + `reset_budget`, exp backoff + jitter, `Retry-After`/`X-RateLimit-Reset` min-wait, daily-quota fail-fast, `stats`/`usage`), `extract_usage` (metadata or chars/4 + `estimated_calls`), `strip_reasoning` (tags built from parts), `build_llm_client`.
-- `tests/fakes.py`: `FakeChatModel` (scripted AIMessage/exceptions, records calls) + openai exception helpers on **httpx2** stub responses (openai 3.24 moved to httpx2); 14 new unit tests with injected fake sleep/clock/rng asserting exact sleep values.
-- Slug verification: `qwen/qwen3.8-27b:free` **exists** in the public `https://openrouter.ai/api/v1/models` list (466 models) → default kept. Step 6b skipped: no `OPENROUTER_API_KEY` in `.env`.
-- Versions: langchain-openai 1.6.7, openai 3.24.0, langchain-core 1.6.6. ChatOpenAI accepts kwargs `model/base_url/api_key/timeout` (stored as `model_name`/`openai_api_base`/`openai_api_key`/`request_timeout`).
-- `pytest -q` → 46 passed, 1 slow deselected; ruff check + format clean.
-- Task 4 fix-up: API retry limit is now **per logical call** (`_retry_backoff` gates on `attempt`; `stats.api_retries` stays cumulative), `strip_reasoning` also drops close-only think fragments, and malformed HTTP-200 bodies (langchain_openai's `ValueError` on an `error` field / `TypeError` on null `choices`) fail fast to `DailyQuotaExceeded` on daily-limit text, else retry with backoff.
-- Live check (fix-up session): 1 real call via `build_llm_client()` → text `ready`, `qwen/qwen3.8-27b:free`, 81 tokens, 0 retries, 1 request. Note: `.env` `LLM_MODEL` is `thinkingmachines/inkling:free`, which OpenRouter 403s for non-agentic-harness clients; the default slug works.
+### Latest milestone (Task 5 — prompts, response parser, generate node)
+- `prompts.py`: `GENERATE_SYSTEM` (strict tagged-format rules, compact for free-tier quotas), `FORMAT_REMINDER` (strict re-ask), `build_generate_messages` (task + capped doc context + PROVIDED TESTS instruction), `format_context` (whole-block truncation that accounts for the join separator, total ≤ `context_max_chars`).
+- `parsing.py`: `parse_bundle` (case-insensitive tags, whitespace, fences inside tags, missing closing tag at end, surrounding prose, defensive re-`strip_reasoning`; fenced-block fallback when `<code>` is absent; `ParseError` only when code — or required tests — is truly unrecoverable) + reusable `parse_tagged`.
+- `schemas.py`: pydantic `CodeBundle {explanation, code, tests, docs_used}`, `extract_imports` (ast top-level module names, first-seen order, syntax errors → []).
+- `nodes/generate.py`: `make_generate_node(llm, settings)` — one re-ask on `ParseError`; any `LLMError` on a mandatory call → `status="failed"` + actionable `failure_reason` (never a crash; failed updates carry only successful-call usage); history `StepEvent` summary `{code_chars, tests_chars, doc_ids, docs_used, imports, reasks}`; input state never mutated.
+- `tests/fakes.py`: `ScriptedLLM` (`TextLLM` fake: scripted texts/exceptions, records `.calls`/`.purposes`, fake usage) + `bundle_text` (renders the tagged format).
+- Housekeeping: 403 now says access denied / key-lacks-access / model-restricted-to-specific-clients (points at `LLM_MODEL`, includes first 160 body chars); 401 keeps the key message; 403 assertion adjusted inside the existing `test_auth_errors_fail_fast`.
+- `pytest -q` → 56 passed (46 + 10 new), 2 deselected (1 live, 1 slow); ruff check + format clean; tag-literal + round-trip snippet verified.
+- Live (1 run, 2 real calls): `qwen/qwen3.8-27b:free`; the FIRST reply did NOT follow the tagged format → the strict re-ask fired and the second reply parsed (code + tests non-empty). The re-ask/fallback path is load-bearing, not optional.
+- Not started: Task 6 onward (sandbox & run_tests).
 
 ### Not started
-Task 5 onward.
+Task 6 onward.

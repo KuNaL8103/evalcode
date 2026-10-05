@@ -303,10 +303,17 @@ class LLMClient:
         settings = self._settings
         status = exc.status_code
         text = _error_text(exc)
-        if status in (401, 403):
+        if status == 401:
             raise LLMAuthError(
-                f"OpenRouter authentication failed (HTTP {status}). Set a valid "
+                "OpenRouter authentication failed (HTTP 401). Set a valid "
                 "OPENROUTER_API_KEY (https://openrouter.ai/keys) in .env or the environment."
+            ) from exc
+        if status == 403:
+            raise LLMAuthError(
+                f"OpenRouter access denied (HTTP 403): your key may lack access, or "
+                f"model '{settings.llm_model}' may be restricted to specific clients. "
+                f"Check LLM_MODEL and use a model that allows plain API-key clients "
+                f"(response: {text[:160]})."
             ) from exc
         if status == 402:
             raise LLMAuthError(

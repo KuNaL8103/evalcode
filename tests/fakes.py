@@ -12,7 +12,11 @@ from __future__ import annotations
 from typing import Any
 
 import httpx2
+from langchain_core.messages import BaseMessage
 from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+
+from evalcode.llm import LLMResponse
+from evalcode.state import TokenUsage
 
 # The OpenAI chat-completions endpoint, used only for stub httpx2.Request objects.
 _CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -89,3 +93,57 @@ def make_connection_error() -> APIConnectionError:
 def make_timeout_error() -> APITimeoutError:
     """Build an ``openai.APITimeoutError`` (request timed out)."""
     return APITimeoutError(request=_request())
+
+
+class ScriptedLLM:
+    """``TextLLM`` fake for node tests: scripted replies, no OpenRouter.
+
+    Each script item is either the response text (``str``) or an exception
+    instance to raise. Every call's messages list is recorded in ``calls``
+    (with the parallel ``purposes`` list). When the script is exhausted the
+    LAST item repeats, so short scripts can stand in for "always fails".
+    """
+
+    def __init__(self, script: list[Any]) -> None:
+        if not script:
+            raise ValueError("ScriptedLLM needs a non-empty script")
+        self._script = list(script)
+        self._index = 0
+        self.calls: list[list[Any]] = []
+        self.purposes: list[str] = []
+
+    def invoke_text(self, messages: list[BaseMessage], *, purpose: str = "generate") -> LLMResponse:
+        self.calls.append(list(messages))
+        self.purposes.append(purpose)
+        item = self._script[min(self._index, len(self._script) - 1)]
+        self._index += 1
+        if isinstance(item, Exception):
+            raise item
+        usage: TokenUsage = {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "total_tokens": 30,
+            "llm_calls": 1,
+            "api_retries": 0,
+            "wait_s": 0.0,
+        }
+        return LLMResponse(text=item, usage=usage, model="scripted-model", waited_s=0.0)
+
+
+def bundle_text(
+    code: str,
+    tests: str | None = None,
+    explanation: str = "test explanation",
+    docs_used: list[str] | None = None,
+) -> str:
+    """Render the tagged protocol format for scripted responses.
+
+    ``tests=None`` omits the ``<tests>`` section (code-only reply, as when
+    the task carries provided tests).
+    """
+    parts = [f"<explanation>\n{explanation}\n</explanation>", f"<code>\n{code}\n</code>"]
+    if tests is not None:
+        parts.append(f"<tests>\n{tests}\n</tests>")
+    if docs_used:
+        parts.append(f"<docs_used>\n{', '.join(docs_used)}\n</docs_used>")
+    return "\n".join(parts)

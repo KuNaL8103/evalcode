@@ -15,6 +15,14 @@ class ConfigError(EvalcodeError):
     """Raised when configuration is missing or invalid."""
 
 
+class ParseError(EvalcodeError):
+    """The model output could not be parsed into a usable code bundle.
+
+    The reason is a short, developer-facing hint about what was missing
+    (e.g. no code block, no tests) — never the raw model output.
+    """
+
+
 class LLMError(EvalcodeError):
     """Base class for all LLM (OpenRouter) access errors.
 
