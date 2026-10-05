@@ -88,18 +88,17 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 2 fix-up 2 (6fe6d3f): index C-implemented class methods (method/builtin/classmethod descriptors); default test suite no longer imports heavy packages (install check + `find_spec`); test count unchanged (22).
 - Task 3 pre-work (8f4a18d): `_public_methods` walks `dir(cls)`/MRO, so methods inherited from Python base classes are indexed (e.g. `pathlib.Path.with_suffix`), while members inherited from builtins bases (`BaseException.add_note`) stay skipped; json still yields exactly 12 chunks; test count unchanged (22).
 - Task 3 (f03e7ea): embeddings, Chroma store, retriever, ingest (`rag/embeddings,store,retriever,ingest` + `RetrievedDoc`); 10 new tests + 1 slow.
-- Task 3b (see git log): retrieval-quality tuning — `_clean_signature`, `DocChunk.embed_text` (compact embedding input), probe script; test count unchanged (32).
+- Task 3b (8a09984): retrieval-quality tuning — `_clean_signature`, `DocChunk.embed_text` (compact embedding input), probe script; test count unchanged (32).
+- Task 4 (see git log): state schema & OpenRouter LLM client — `state.py`, `llm.py` (backoff, rate-limit, budget), LLM error hierarchy, `tests/fakes.py`; 14 new tests (46).
 
-### Latest milestone (Task 3b — retrieval-quality tuning)
-- Task 3 files: `rag/embeddings.py` (`Embedder`/`HFEmbedder`/`FakeEmbedder`/`get_embedder`; `dim` from `get_embedding_dimension()`, falling back to `get_sentence_embedding_dimension()`, else a probe embedding), `rag/store.py` (Chroma `VectorStore`, cosine space, explicit vectors), `rag/retriever.py` (`Retriever`), `rag/ingest.py` (+ `python -m` runners).
-- Task 3b changes: `loaders._clean_signature` rewrites default-value object reprs `<…at 0x…>` → `...` (deterministic chunk text, e.g. `json.JSONDecoder.decode(… _w=…)`); `DocChunk.embed_text` (`"dotted.name: first docstring sentence"`, ≤200 chars; introspection only, `None` for text files) — `VectorStore.upsert` embeds `embed_text or text` while full `text` stays stored/returned.
-- `scripts/probe_retrieval.py` (dev tool, fixed 10-query list → `data/probe_<label>.json`), json+re+collections corpus, k=20:
-  - baseline: hit@5 0.70, hit@10 0.90, MRR 0.530, mean-rank 4.20 (json.loads #7, json.dumps #12, json.dump #4, re.sub #8, re.findall #2, re.split #1, Counter #5, deque #1, move_to_end #1, defaultdict #1)
-  - sanitized: hit@5 0.70, hit@10 0.90, MRR 0.530, mean-rank 4.20 (same ranks)
-  - compact/final: hit@5 0.80, hit@10 1.00, MRR 0.633, mean-rank 2.40 (json.loads #6, json.dumps #2, json.dump #1, re.sub #2, re.findall #2, re.split #2, Counter #6, deque #1, move_to_end #1, defaultdict #1)
-- Decision rule: compact beat baseline on every metric → kept. `json.loads` #6 / `re.sub` #2 (both outside top-5) → slow test keeps failing-safe **top-10**.
-- Cosine-space proof in `test_store_query_returns_exact_text_first`: token-disjoint chunks score ≈0 (would be ≈-1 under L2), and an `embed_text`-only chunk is retrieved while its `.text` stays intact.
-- `pytest -q` → 32 passed; `pytest -m slow -q` → 1; ruff clean. **Re-ingest** `data/chroma` with `python -m evalcode.rag.ingest --reset` after any change to chunking / `embed_text` / embedding model.
+### Latest milestone (Task 4 — state schema & OpenRouter LLM client)
+- `state.py`: exact §3.2 schemas (`TokenUsage`, `RunFailure`, `RunResult`, `ErrorAnalysis`, `StepEvent`, `AgentState`), `merge_usage` reducer (None/missing-tolerant), `utc_now_iso`; reuses `RetrievedDoc` from `rag.types`.
+- `errors.py`: `LLMError` hierarchy — `LLMAuthError`, `LLMModelError`, `LLMRequestError`, `DailyQuotaExceeded`, `LLMUnavailable`, `LLMBudgetExceeded`, internal retryable `EmptyResponseError`; actionable messages, no key material.
+- `llm.py`: `get_chat_model` (`max_retries=0`, `default_headers={"X-Title": "evalcode"}`), `LLMResponse`, `TextLLM` protocol, `LLMClient` (throttle, budget + `reset_budget`, exp backoff + jitter, `Retry-After`/`X-RateLimit-Reset` min-wait, daily-quota fail-fast, `stats`/`usage`), `extract_usage` (metadata or chars/4 + `estimated_calls`), `strip_reasoning` (tags built from parts), `build_llm_client`.
+- `tests/fakes.py`: `FakeChatModel` (scripted AIMessage/exceptions, records calls) + openai exception helpers on **httpx2** stub responses (openai 3.24 moved to httpx2); 14 new unit tests with injected fake sleep/clock/rng asserting exact sleep values.
+- Slug verification: `qwen/qwen3.8-27b:free` **exists** in the public `https://openrouter.ai/api/v1/models` list (466 models) → default kept. Step 6b skipped: no `OPENROUTER_API_KEY` in `.env`.
+- Versions: langchain-openai 1.6.7, openai 3.24.0, langchain-core 1.6.6. ChatOpenAI accepts kwargs `model/base_url/api_key/timeout` (stored as `model_name`/`openai_api_base`/`openai_api_key`/`request_timeout`).
+- `pytest -q` → 46 passed, 1 slow deselected; ruff check + format clean.
 
 ### Not started
-Task 4 onward.
+Task 5 onward.
