@@ -8,6 +8,7 @@ unparseable) on the DEFAULT free model. Skips with a clear reason when
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 from dotenv import dotenv_values, find_dotenv
@@ -57,7 +58,12 @@ def test_live_generate_add_function() -> None:
     try:
         bundle = parse_bundle(response.text, require_tests=True)
         first_reply_ok = True
-    except ParseError:
+    except ParseError as exc:
+        # Diagnostics before the strict re-ask — never log the full reply or key.
+        raw = response.text or ""
+        head = "".join(ch if ord(ch) < 128 else "?" for ch in raw[:300])
+        head = re.sub(r"\s+", " ", head).strip()
+        print(f"live parse-fail: reason={exc}, reply_len={len(raw)}, reply_head={head!r}")
         # Exactly one strict re-ask: the test still makes at most 2 calls.
         reask = [
             *messages,

@@ -91,7 +91,8 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 3b (8a09984): retrieval-quality tuning — `_clean_signature`, `DocChunk.embed_text` (compact embedding input), probe script; test count unchanged (32).
 - Task 4 (4c54c9e): state schema & OpenRouter LLM client — `state.py`, `llm.py` (backoff, rate-limit, budget), LLM error hierarchy, `tests/fakes.py`; 14 new tests (46).
 - Task 4 fix-up (39e2543): per-call API retry limit, close-only reasoning strip, malformed-response retry; test count unchanged (46).
-- Task 5 (see git log): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
+- Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing (next-tag termination), reply_head / parse_reason diagnostics in generate node and live test; live: slug 404, diagnostics code verified; 56 passed.
+- Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 
 ### Latest milestone (Task 5 — prompts, response parser, generate node)
 - `prompts.py`: `GENERATE_SYSTEM` (strict tagged-format rules, compact for free-tier quotas), `FORMAT_REMINDER` (strict re-ask), `build_generate_messages` (task + capped doc context + PROVIDED TESTS instruction), `format_context` (whole-block truncation that accounts for the join separator, total ≤ `context_max_chars`).
@@ -101,7 +102,7 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - `tests/fakes.py`: `ScriptedLLM` (`TextLLM` fake: scripted texts/exceptions, records `.calls`/`.purposes`, fake usage) + `bundle_text` (renders the tagged format).
 - Housekeeping: 403 now says access denied / key-lacks-access / model-restricted-to-specific-clients (points at `LLM_MODEL`, includes first 160 body chars); 401 keeps the key message; 403 assertion adjusted inside the existing `test_auth_errors_fail_fast`.
 - `pytest -q` → 56 passed (46 + 10 new), 2 deselected (1 live, 1 slow); ruff check + format clean; tag-literal + round-trip snippet verified.
-- Live (1 run, 2 real calls): `qwen/qwen3.8-27b:free`; the FIRST reply did NOT follow the tagged format → the strict re-ask fired and the second reply parsed (code + tests non-empty). The re-ask/fallback path is load-bearing, not optional.
+- Live (fix-up, 1 run): `qwen/qwen3.8-27b:free` now returns HTTP 404 from OpenRouter ("unavailable for free" — slug removed/renamed upstream, paid version suggested); no reply received, so first reply parse is N/A, reply_head diagnostic did not trigger (call blocked at `LLMModelError`), tokens 0. The diagnostics code (`reply_head` + `parse_reason` in summary, print before re-ask) is verified by unit tests; the slug needs a replacement (check `https://openrouter.ai/api/v1/models`).
 - Not started: Task 6 onward (sandbox & run_tests).
 
 ### Not started

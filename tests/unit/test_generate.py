@@ -90,6 +90,12 @@ def test_parse_bundle_tolerant_variants() -> None:
             CODE.strip(),
             TESTS.strip(),
         ),
+        # missing </code> closing tag followed by <tests>
+        (
+            f"<explanation>x</explanation>\n<code>\n{CODE}\n<tests>\n{TESTS}\n</tests>",
+            CODE.strip(),
+            TESTS.strip(),
+        ),
     ]
     for raw, expected_code, expected_tests in cases:
         bundle = parse_bundle(raw, require_tests=True)
@@ -132,7 +138,10 @@ def test_parse_tagged_helper() -> None:
     assert parse_tagged("no tags here", "code") is None
     assert parse_tagged("", "code") is None
     # Missing closing tag: content runs to the end of the text.
+    # Missing closing tag followed by a different protocol tag -> stops at that tag.
+    assert parse_tagged("<code>\ncode body\n<tests>\ntests</tests>", "code") == "code body"
     assert parse_tagged("<tests>\nunterminated\nmore", "tests") == "unterminated\nmore"
+    assert parse_tagged("", "code") is None
 
 
 def test_extract_imports() -> None:
@@ -254,6 +263,9 @@ def test_generate_node_reask_and_failures() -> None:
     assert isinstance(second[2], AIMessage) and second[2].content == bad
     assert isinstance(second[3], HumanMessage) and second[3].content == FORMAT_REMINDER
     assert update["history"][0]["summary"]["reasks"] == 1
+    assert "reply_head" in update["history"][0]["summary"]
+    assert update["history"][0]["summary"]["reply_head"]
+    assert "parse_reason" in update["history"][0]["summary"]
     assert update["token_usage"]["llm_calls"] == 2  # the re-ask counts too
 
     # (b) bad twice -> failed update, never an exception.
@@ -261,7 +273,12 @@ def test_generate_node_reask_and_failures() -> None:
     update2 = make_generate_node(llm2, make_settings())({"task": "t"})
     assert update2["status"] == "failed"
     assert "parseable" in update2["failure_reason"]
-    assert update2["history"][0]["summary"] == {"error": "ParseError", "reasks": 1}
+    assert "reply_head" in update2["history"][0]["summary"]
+    assert "parse_reason" in update2["history"][0]["summary"]
+    assert update2["history"][0]["summary"]["error"] == "ParseError"
+    assert update2["history"][0]["summary"]["reasks"] == 1
+    assert "reply_head" in update2["history"][0]["summary"]
+    assert "parse_reason" in update2["history"][0]["summary"]
     assert len(llm2.calls) == 2
 
     # (c) daily quota on the first call -> failed update with the quota message.

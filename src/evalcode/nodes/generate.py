@@ -13,6 +13,7 @@ The input state is never mutated.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -27,6 +28,14 @@ from evalcode.schemas import CodeBundle, extract_imports
 from evalcode.state import AgentState, TokenUsage, merge_usage, utc_now_iso
 
 __all__ = ["make_generate_node"]
+
+
+def _reply_head(text: str) -> str:
+    """ASCII-safe, whitespace-collapsed first 200 chars of a model reply."""
+    snippet = text[:200]
+    safe = "".join(ch if ord(ch) < 128 else "?" for ch in snippet)
+    collapsed = re.sub(r"\s+", " ", safe).strip()
+    return collapsed
 
 
 def _step(attempt: int, summary: dict[str, Any]) -> dict[str, Any]:
@@ -56,6 +65,7 @@ def make_generate_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState
         usage: TokenUsage = {}
         reasks = 0
         bundle: CodeBundle | None = None
+        parse_reason = ""
 
         try:
             response = llm.invoke_text(messages, purpose="generate")
@@ -65,9 +75,11 @@ def make_generate_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState
         usage = merge_usage(usage, response.usage)
         try:
             bundle = parse_bundle(response.text, require_tests=require_tests)
-        except ParseError:
+        except ParseError as exc:
             # Exactly one strict re-ask; it counts against the client budget too.
             reasks = 1
+            _reply_head(response.text)
+            parse_reason = str(exc)
             reask = [
                 *messages,
                 AIMessage(content=response.text),
@@ -81,7 +93,7 @@ def make_generate_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState
             usage = merge_usage(usage, second.usage)
             try:
                 bundle = parse_bundle(second.text, require_tests=require_tests)
-            except ParseError:
+            except ParseError as exc2:
                 return {
                     "status": "failed",
                     "failure_reason": (
@@ -89,7 +101,17 @@ def make_generate_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState
                         "a strict format re-ask. Retry the run, or pick a stronger model via "
                         "LLM_MODEL."
                     ),
-                    "history": [_step(attempt, {"error": "ParseError", "reasks": reasks})],
+                    "history": [
+                        _step(
+                            attempt,
+                            {
+                                "error": "ParseError",
+                                "reasks": reasks,
+                                "reply_head": _reply_head(second.text),
+                                "parse_reason": str(exc2),
+                            },
+                        )
+                    ],
                     "token_usage": usage,
                 }
 
@@ -102,6 +124,8 @@ def make_generate_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState
             "docs_used": bundle.docs_used,
             "imports": extract_imports(bundle.code),
             "reasks": reasks,
+            "reply_head": _reply_head(response.text) if reasks else "",
+            "parse_reason": parse_reason if reasks else "",
         }
         return {
             "code": bundle.code,

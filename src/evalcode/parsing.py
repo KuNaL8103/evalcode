@@ -29,8 +29,19 @@ def parse_tagged(text: str, tag: str) -> str | None:
     """
     if not text:
         return None
+    # When the closing tag is missing, terminate at the first opening tag of
+    # another known protocol tag (explanation/code/tests/docs_used), else EOF.
+    other_tags = "explanation|code|tests|docs_used"
+    close_pat = r"</\s*" + re.escape(tag) + r"\s*>"
+    next_open_pat = r"<\s*(?:" + other_tags + r")\s*>"
     pattern = re.compile(
-        r"<\s*" + re.escape(tag) + r"\s*>\s*(.*?)\s*(?:</\s*" + re.escape(tag) + r"\s*>|\Z)",
+        r"<\s*"
+        + re.escape(tag)
+        + r"\s*>\s*(.*?)\s*(?:"
+        + close_pat
+        + r"|"
+        + next_open_pat
+        + r"|\Z)",
         re.IGNORECASE | re.DOTALL,
     )
     match = pattern.search(text)
