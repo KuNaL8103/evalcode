@@ -103,7 +103,8 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Housekeeping: 403 now says access denied / key-lacks-access / model-restricted-to-specific-clients (points at `LLM_MODEL`, includes first 160 body chars); 401 keeps the key message; 403 assertion adjusted inside the existing `test_auth_errors_fail_fast`.
 - `pytest -q` → 56 passed (46 + 10 new), 2 deselected (1 live, 1 slow); ruff check + format clean; tag-literal + round-trip snippet verified.
 - Live (fix-up, 1 run): `qwen/qwen3.8-27b:free` now returns HTTP 404 from OpenRouter ("unavailable for free" — slug removed/renamed upstream, paid version suggested); no reply received, so first reply parse is N/A, reply_head diagnostic did not trigger (call blocked at `LLMModelError`), tokens 0. The diagnostics code (`reply_head` + `parse_reason` in summary, print before re-ask) is verified by unit tests; the slug needs a replacement (check `https://openrouter.ai/api/v1/models`).
-- Not started: Task 6 onward (sandbox & run_tests).
+- Task 6 (0dd379c): subprocess sandbox (`sandbox/runner.py` + `errors.py`) and `run_tests` node (`nodes/run_tests.py`); 22 new tests (78 passed total); Windows branch uses `CREATE_NEW_PROCESS_GROUP` + `taskkill /F /T /PID`; POSIX uses `start_new_session` + `preexec_fn` rlimits; secret env scrubbed; temp-dir retry cleanup; timeout kills whole tree.
+- Not started: Task 7 onward.
 
 ### Not started
-Task 6 onward.
+Task 7 onward.
