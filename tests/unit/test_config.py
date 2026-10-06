@@ -48,7 +48,7 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_defaults() -> None:
     s = Settings()
-    assert s.openrouter_base_url == "https://openrouter.ai/api/v1"
+    assert s.llm_base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
     assert s.llm_model == "qwen/qwen3.8-27b:free"
     assert s.openrouter_api_key is None
     assert s.langsmith_api_key is None

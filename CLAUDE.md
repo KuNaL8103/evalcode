@@ -94,12 +94,12 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing, reply_head / parse_reason diagnostics; live: 404 (slug removed), no reply received, tokens 0, LLM_MAX_TOKENS 8192; 56 passed.
 - Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 
-### Latest milestone (Task 6 — sandbox fix-up)
-- `sandbox/errors.py`: plain dicts matching state.RunResult/RunFailure (passed, category literals pass/syntax_error/import_error/runtime_error/assertion_failure/timeout/no_tests/sandbox_error); parse_junit/last_exception_line/classify/truncate_output.
-- `sandbox/runner.py`: Windows `CREATE_NEW_PROCESS_GROUP` + `taskkill /F /T /PID`; POSIX `start_new_session`/preexec_fn rlimits; scrub GEMINI_/GOOGLE_/API_KEY; timeout kills tree.
+### Latest milestone (Provider switch to Gemini — B1-B8)
+- Verified id `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; `ChatOpenAI` config; `retryDelay` parsed; `X-Title` dropped; errors => Gemini.
 - `nodes/run_tests.py`: missing code/tests -> `sandbox_error`; returns dict `{run_result, history}`.
 - `nodes/generate.py`: `make_generate_node` adds `reply_head` + `ParseError` reason to history; live 404 verified.
 - Evidence: timeout wall-time `<=6` (timeout_s+3); PID file with 2 PIDs; grandchild killed; 73 passed + 5 runner line-length remnants.
+- Provider switch to Gemini (361ea40): verified `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; config `GEMINI_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`; B7 live skipped (env); no OpenRouter defaults remain.
 - Not started: Task 7 onward.
 
 ### Not started

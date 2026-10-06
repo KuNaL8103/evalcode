@@ -1,4 +1,4 @@
-"""Unit tests for the OpenRouter LLM client (llm.py).
+"""Unit tests for the Gemini LLM client (llm.py).
 
 All sleeps/clocks/RNG are fakes: tests run instantly and assert the exact
 sleep durations the backoff/throttle logic requested.

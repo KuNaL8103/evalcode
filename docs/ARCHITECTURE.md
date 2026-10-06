@@ -11,7 +11,7 @@ Design of record. If an implementation decision changes this design, update this
 - Everything testable offline: unit tests never call a real LLM or the network.
 
 **Hard constraints**
-- The only LLM provider is **OpenRouter free models**, accessed through LangChain `ChatOpenAI` with `base_url="https://openrouter.ai/api/v1"`. The key comes only from the `OPENROUTER_API_KEY` environment variable (optionally loaded from a git-ignored `.env`). No hardcoded keys, no other providers.
+- The only LLM provider is **Google Gemini** via the OpenAI-compatible endpoint, accessed through LangChain `ChatOpenAI` with `base_url="https://generativelanguage.googleapis.com/v1beta/openai/"`. The key comes only from the `GEMINI_API_KEY` environment variable (optionally loaded from a git-ignored `.env`). No hardcoded keys, no other providers.
 - Embeddings are local (no API, no quota).
 
 **Non-goals**: multi-file projects, non-Python languages, adversarial-grade sandboxing, web UI, multi-user serving.
@@ -22,7 +22,7 @@ Design of record. If an implementation decision changes this design, update this
 |---|---|---|---|
 | Language | Python 3.11+ | Required by the LangGraph ecosystem; modern typing | — |
 | Orchestration | LangGraph `StateGraph` | Explicit state, conditional edges, checkpointing, native `interrupt` for human-in-the-loop | Hand-rolled loop (no persistence/interrupts) |
-| LLM provider | OpenRouter via `langchain_openai.ChatOpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)`; default model `qwen/qwen3.8-27b:free`, set by `LLM_MODEL` | Zero cost, OpenAI-compatible API, one variable swaps between free models (e.g. `qwen/qwen3-coder:free`). Free slugs change often, so the model is never hardcoded outside config defaults | Paid providers (excluded by constraint) |
+| LLM provider | Gemini via `langchain_openai.ChatOpenAI(base_url=LLM_BASE_URL, api_key=GEMINI_API_KEY)`; default model `gemini-3.5-flash-lite`, set by `LLM_MODEL` | Zero cost, OpenAI-compatible API, one variable swaps between free models (e.g. `qwen/qwen3-coder:free`). Free slugs change often, so the model is never hardcoded outside config defaults | Paid providers (excluded by constraint) |
 | LLM output protocol | Tagged plain text: `<explanation>`, `<code>`, `<tests>`, optional `<docs_used>`; parsed locally | Free models/providers differ in tool-calling and JSON-mode support; plain text works everywhere. Reasoning models' `<think>…</think>` blocks are stripped before parsing | `with_structured_output`/tool calling (unreliable on free endpoints) |
 | LLM reliability layer | `LLMClient` wrapping the chat model (see §5) | Free tiers have low per-minute and daily limits; the agent loops, so backoff, throttling, and a per-run call budget are mandatory | Relying on the SDK's built-in retries (too blunt, no budget) |
 | Embeddings | `sentence-transformers/all-MiniLM-L6-v2` via `langchain_huggingface.HuggingFaceEmbeddings` (local, CPU, normalized, 384-d) | No key, no quota, small download. **Max sequence ≈256 word-pieces**, so chunks are capped around 1000 chars with the signature first | `bge-small`, `e5` (need query prefixes) — swappable through the `Embedder` protocol and `EMBEDDING_MODEL` |
@@ -213,7 +213,7 @@ All errors derive from `LLMError`. Nodes talk only to `TextLLM`; nothing else im
 ## 9. Testing strategy
 
 - Unit tests: `FakeEmbedder` (deterministic hashing), `FakeChatModel` (scripted outputs and scripted openai-style exceptions, for `LLMClient`), `ScriptedLLM` (implements `TextLLM`, scripted tagged responses with usage), real sandbox on tiny snippets, `MemorySaver` for graph tests. Backoff tests inject fake sleep/clock.
-- Markers: `live` (real OpenRouter calls; needs `OPENROUTER_API_KEY`; consumes free quota) and `slow` (downloads the real embedding model); both deselected by default.
+- Markers: `live` (real Gemini calls; needs `GEMINI_API_KEY`; consumes free quota) and `slow` (downloads the real embedding model); both deselected by default.
 - Eval harness (`eval/`): fixed tasks with reference solutions and acceptance tests; compares RAG on vs off; resumable and quota-aware.
 
 ## 10. Configuration (env or `.env`; real env vars win over `.env`; blank = unset)
@@ -225,7 +225,7 @@ All errors derive from `LLMError`. Nodes talk only to `TextLLM`; nothing else im
 | Risk | Mitigation |
 |---|---|
 | Free-tier per-minute/daily limits | Throttle, backoff, `Retry-After`, `DailyQuotaExceeded` fail-fast, per-run call budget, optional LLM calls off by default, small prompts, resumable eval |
-| Free model slug removed/renamed | `LLM_MODEL` env var; `LLMModelError` with a clear hint; verify slug against `https://openrouter.ai/api/v1/models` |
+| Free model slug removed/renamed | `LLM_MODEL` env var; `LLMModelError` with a clear hint; verify id against https://ai.google.dev/gemini-api/docs/models |
 | Free models ignore the output format | Tagged-text protocol with tolerant parser, fenced-block fallback, one format re-ask, then graceful fail |
 | Reasoning models burn tokens on `<think>` | `LLM_MAX_TOKENS` cap, `<think>` stripping |
 | Missing usage metadata from provider | Estimate from char counts, flagged `estimated_calls` |

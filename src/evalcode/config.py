@@ -5,7 +5,7 @@ Env loading is explicit (``load_settings``), not via pydantic-settings'
 (``load_dotenv(override=False)``), and blank env values are treated as
 unset (``env_ignore_empty=True``) so they fall back to defaults.
 
-The OpenRouter API key comes only from the ``OPENROUTER_API_KEY``
+The Gemini API key comes only from the ``GEMINI_API_KEY``
 environment variable (optionally loaded from a git-ignored ``.env``) and
 is held as a ``SecretStr`` so it never appears in reprs, dumps, or logs.
 """
@@ -25,7 +25,7 @@ from evalcode.errors import ConfigError
 __all__ = ["Settings", "get_settings", "load_settings"]
 
 # Fields holding secrets; safe_dump() masks them.
-_SECRET_FIELDS = ("openrouter_api_key", "langsmith_api_key")
+_SECRET_FIELDS = ("gemini_api_key", "langsmith_api_key")
 
 
 class Settings(BaseSettings):
@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", env_ignore_empty=True)
 
     # --- OpenRouter / LLM ---
-    openrouter_api_key: SecretStr | None = None
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    llm_model: str = "qwen/qwen3.8-27b:free"
+    gemini_api_key: SecretStr | None = None
+    llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    llm_model: str = "gemini-3.5-flash-lite"
     llm_temperature: float = Field(default=0.2, ge=0)
     llm_max_tokens: int = Field(default=8192, gt=0)
     llm_timeout_s: float = Field(default=120, gt=0)
@@ -106,15 +106,15 @@ class Settings(BaseSettings):
         return value
 
     def require_api_key(self) -> SecretStr:
-        """Return the OpenRouter API key, or raise ``ConfigError`` with setup help.
+        """Return the Gemini API key, or raise ``ConfigError`` with setup help.
 
         The raised message never includes any key material.
         """
-        key = self.openrouter_api_key
+        key = self.gemini_api_key
         if key is None or not key.get_secret_value().strip():
             raise ConfigError(
-                "OPENROUTER_API_KEY is not set. Get a free API key at "
-                "https://openrouter.ai/keys, then export OPENROUTER_API_KEY in your "
+                "GEMINI_API_KEY is not set. Get a free API key at "
+                "https://aistudio.google.com/apikey, then export GEMINI_API_KEY in your "
                 "environment or set it in a git-ignored .env file (copy "
                 ".env.example to .env and fill it in). Never commit your key."
             )

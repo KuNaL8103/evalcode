@@ -1,6 +1,6 @@
-"""OpenRouter LLM access layer (ARCHITECTURE §5).
+"""Gemini LLM access layer (ARCHITECTURE §5).
 
-The only provider is OpenRouter (free models). ``get_chat_model`` builds a
+The only provider is Gemini (free models via OpenAI-compatible endpoint). ``get_chat_model`` builds a
 ``ChatOpenAI`` with SDK retries disabled (``max_retries=0``); ``LLMClient``
 owns the whole retry policy: throttle, per-run call budget, exponential
 backoff + jitter, ``Retry-After``/``X-RateLimit-Reset`` handling, daily-quota
@@ -57,26 +57,33 @@ _THINK_BLOCK_RE = re.compile(THINK_OPEN + r"\s*.*?" + THINK_CLOSE, re.DOTALL)
 _THINK_TRAILING_RE = re.compile(THINK_OPEN + r"\s*.*\Z", re.DOTALL)
 
 # Case-insensitive markers that a 429 refers to the *daily* free quota.
-_DAILY_LIMIT_KEYWORDS = ("per-day", "per day", "daily", "free-models-per-day")
+_DAILY_LIMIT_KEYWORDS = (
+    "per-day",
+    "per day",
+    "daily",
+    "free-models-per-day",
+    "perday",
+    "requests per day",
+)
 
 
 def get_chat_model(settings: Settings) -> ChatOpenAI:
-    """Build the OpenRouter chat model.
+    """Build the Gemini chat model via OpenAI-compatible endpoint.
 
-    ``max_retries=0`` so the OpenAI SDK never retries on its own —
+    ``max_retries=0`` so the SDK never retries on its own — backoff lives in LLMClient.
     ``LLMClient`` owns retry policy (backoff, headers, budget). Raises
     ``ConfigError`` (via ``require_api_key``) when the key is missing.
     """
     api_key = settings.require_api_key()
     return ChatOpenAI(
         model=settings.llm_model,
-        base_url=settings.openrouter_base_url,
+        base_url=settings.llm_base_url,
         api_key=api_key,
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         timeout=settings.llm_timeout_s,
         max_retries=0,
-        default_headers={"X-Title": "evalcode"},
+        default_headers={},
     )
 
 
@@ -261,7 +268,7 @@ class LLMClient:
                 text = str(exc)
                 if any(kw in text.lower() for kw in _DAILY_LIMIT_KEYWORDS):
                     raise DailyQuotaExceeded(
-                        f"OpenRouter response indicates the daily free quota is exhausted "
+                        f"Gemini response indicates the daily free quota is exhausted "
                         f"({text[:160]}). Wait for the quota to reset (or add credits)."
                     ) from exc
                 delay = self._retry_backoff(attempt, purpose, "malformed response", exc)
@@ -306,7 +313,7 @@ class LLMClient:
         if status == 401:
             raise LLMAuthError(
                 "OpenRouter authentication failed (HTTP 401). Set a valid "
-                "OPENROUTER_API_KEY (https://openrouter.ai/keys) in .env or the environment."
+                "GEMINI_API_KEY (https://aistudio.google.com/apikey) in .env or the environment."
             ) from exc
         if status == 403:
             raise LLMAuthError(
@@ -319,12 +326,12 @@ class LLMClient:
             raise LLMAuthError(
                 f"OpenRouter returned 402 Payment Required. The model '{settings.llm_model}' "
                 "may not be free — pick a ':free' model for LLM_MODEL or add credits at "
-                "https://openrouter.ai/credits."
+                "https://ai.google.dev/gemini-api/docs/usage."
             ) from exc
         if status == 404:
             raise LLMModelError(
                 f"OpenRouter could not find model '{settings.llm_model}' (HTTP 404). "
-                "Check LLM_MODEL; free models change — see https://openrouter.ai/models."
+                "Check LLM_MODEL; free models change — see https://ai.google.dev/gemini-api/docs/models."
             ) from exc
         if 400 <= status < 500 and status not in (408, 429):
             raise LLMRequestError(
@@ -336,13 +343,24 @@ class LLMClient:
         if status == 429:
             if any(kw in text.lower() for kw in _DAILY_LIMIT_KEYWORDS):
                 raise DailyQuotaExceeded(
-                    f"OpenRouter reports the daily free quota is exhausted ({text[:160]}). "
+                    f"Gemini reports the daily free quota is exhausted ({text[:160]}). "
                     "Wait for the quota to reset (or add credits) and try again later."
                 ) from exc
             required_wait = self._header_wait(exc)
+            # Gemini may include retryDelay in error body for per-minute 429s
+            retry_delay_body = 0.0
+            try:
+                if hasattr(exc, "body") and exc.body:
+                    body_str = str(exc.body)
+                    m = __import__("re").search(r'"retryDelay"\s*:\s*"?(\d+)s?', body_str)
+                    if m:
+                        retry_delay_body = float(m.group(1))
+            except Exception:
+                pass
+            required_wait = max(required_wait, retry_delay_body)
             if required_wait > settings.llm_max_wait_s:
                 raise DailyQuotaExceeded(
-                    f"OpenRouter asked us to wait {required_wait:.0f}s before retrying, which "
+                    f"Gemini asked us to wait {required_wait:.0f}s before retrying, which "
                     f"exceeds LLM_MAX_WAIT_S ({settings.llm_max_wait_s:.0f}s) — the free quota "
                     "is likely exhausted for today. Wait for the quota to reset (or add credits)."
                 ) from exc

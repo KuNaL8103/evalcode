@@ -30,7 +30,6 @@ from evalcode.sandbox.errors import (
 logger = logging.getLogger(__name__)
 
 _SCRUBBED_KEYS = {
-    "OPENROUTER_API_KEY",
     "LANGSMITH_API_KEY",
     "LANGSMITH_TRACING",
     "HF_TOKEN",

@@ -1,4 +1,4 @@
-"""Opt-in live test: the generate path against real OpenRouter (``-m live``).
+"""Opt-in live test: the generate path against real Gemini (``-m live``).
 
 Makes at most 2 calls (one strict re-ask only if the first reply is
 unparseable) on the DEFAULT free model. Skips with a clear reason when
@@ -21,7 +21,7 @@ from evalcode.llm import build_llm_client
 from evalcode.parsing import parse_bundle
 from evalcode.prompts import FORMAT_REMINDER, build_generate_messages
 
-DEFAULT_MODEL = "qwen/qwen3.8-27b:free"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
 
 def _read_key() -> str:

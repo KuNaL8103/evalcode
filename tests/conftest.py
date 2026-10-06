@@ -21,7 +21,7 @@ def _env_isolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generator
 
     - Snapshots ``os.environ`` and restores it exactly afterwards, so
       ``load_dotenv`` side effects can never leak between tests.
-    - Removes every Settings-field env var (incl. OPENROUTER_API_KEY,
+    - Removes every Settings-field env var (incl. GEMINI_API_KEY,
       LANGSMITH_*) for the duration of the test.
     - Clears the settings cache before and after the test.
     - Points ``find_dotenv`` (as ``evalcode.config`` imports it) at a path

@@ -132,16 +132,53 @@ def test_sandbox_collection_error():
     assert isinstance(result, dict)
 
 
+def pid_alive(pid: int) -> bool:
+    try:
+        import subprocess
+
+        if sys.platform == "win32":
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            return str(pid) in out.stdout
+        else:
+            import os
+
+            os.kill(pid, 0)
+            return True
+    except Exception:
+        return False
+
+
 def test_sandbox_infinite_loop_timeout():
-    code = "def loop():\n    while True: pass"
+    import os
+
+    pid_path = r"C:\temp\sandbox_pids.txt"
+    code = """import os, subprocess, sys
+def loop():
+    p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    with open(r'C:\temp\sandbox_pids.txt', 'w') as f:
+        f.write(str(os.getpid()) + '
+' + str(p.pid) + '
+')
+    while True: pass
+"""
     tests = "def test_loop(): loop()"
-    start = time.time()
+    start_t = time.time()
     result = run_in_sandbox(code, tests, timeout_s=3.0, mem_mb=256)
-    duration = time.time() - start
-    assert result["category"] == C_TIMEOUT or duration < 6.0  # must not hang
-    # Verify no orphan process by checking PID absence (Windows native check via tasklist or simple attempt)
-    # On Windows: try to find process by cmdline; if not found, pass.
-    # We'll just assert result category is timeout; process cleanup handled by runner.
+    duration = time.time() - start_t
+    assert duration <= 6.0, f"wall time {duration} > timeout_s+3"
+    assert result["category"] == C_TIMEOUT
+    assert os.path.exists(pid_path), "PID file missing"
+    lines = open(pid_path, encoding="utf-8").read().splitlines()
+    assert len(lines) >= 2, f"expected 2 PIDs, got {len(lines)}"
+    child_pid = int(lines[0].strip())
+    grandchild_pid = int(lines[1].strip())
+    assert not pid_alive(child_pid), f"child PID {child_pid} still alive"
+    assert not pid_alive(grandchild_pid), f"grandchild PID {grandchild_pid} still alive"
 
 
 def test_sandbox_secret_env_not_visible():

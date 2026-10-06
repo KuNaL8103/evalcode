@@ -19,7 +19,7 @@ from evalcode.llm import LLMResponse
 from evalcode.state import TokenUsage
 
 # The OpenAI chat-completions endpoint, used only for stub httpx2.Request objects.
-_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+_CHAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
 
 class FakeChatModel:
