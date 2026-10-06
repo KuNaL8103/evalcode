@@ -94,12 +94,12 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing, reply_head / parse_reason diagnostics; live: 404 (slug removed), no reply received, tokens 0, LLM_MAX_TOKENS 8192; 56 passed.
 - Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 
-### Latest milestone (Provider switch to Gemini — B1-B8)
-- Verified id `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; `ChatOpenAI` config; `retryDelay` parsed; `X-Title` dropped; errors => Gemini.
-- `nodes/run_tests.py`: missing code/tests -> `sandbox_error`; returns dict `{run_result, history}`.
-- `nodes/generate.py`: `make_generate_node` adds `reply_head` + `ParseError` reason to history; live 404 verified.
-- Evidence: timeout wall-time `<=6` (timeout_s+3); PID file with 2 PIDs; grandchild killed; 73 passed + 5 runner line-length remnants.
-- Provider switch to Gemini (361ea40): verified `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; config `GEMINI_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`; B7 live skipped (env); no OpenRouter defaults remain.
+### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
+- RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.
+- Timeout evidence (A7): `elapsed <= 6.0`; pid_file 2 PIDs; both `pid_alive` false (Windows `tasklist`). Actual result on this Windows run: `runtime_error` (env), assertions present.
+- Provider: `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; live skipped (no `GEMINI_API_KEY`).
+- Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; `GEMINI_API_KEY=` blank.
+- Tests: 70 passed + 2 deselected (9 config/llm remain); ruff clean on changed files; no new tests added.
 - Not started: Task 7 onward.
 
 ### Not started

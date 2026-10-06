@@ -14,15 +14,15 @@ LLM: OpenRouter free models only (default `qwen/qwen3.8-27b:free`, swap via `LLM
 | 3 | Embeddings, Chroma, retriever, ingest | `rag/embeddings,store,retriever,ingest` | 10 (32) | `feat(rag): add HuggingFace embeddings, Chroma vector store, and retriever` |
 | 4 | State schema & OpenRouter LLM client | `state.py`, `llm.py` (backoff, rate-limit, budget), `FakeChatModel` | 14 (46) | `feat(llm): add state schema and OpenRouter client with backoff and call budget` |
 | 5 | Prompts, parser, generate node | `prompts,parsing,schemas,nodes/generate`, `ScriptedLLM` | 10 (56) | `feat(agent): add prompts, response parser, and generate node` |
-| 6 | Sandbox & run_tests | `sandbox/*`, `nodes/run_tests` | 16 (72) | `feat(sandbox): add subprocess sandbox and run_tests node with structured error capture` |
-| 7 | Error analysis & revise | `nodes/analyze_error,revise` | 10 (82) | `feat(agent): add analyze_error and revise nodes` |
-| 8 | Graph wiring & retry edges | `graph.py`, `nodes/terminal` | 10 (92) | `feat(graph): wire LangGraph state machine with conditional retry edges` |
-| 9 | Human-in-the-loop | `nodes/human_review`, `persistence.py` | 8 (100) | `feat(hitl): add human_review interrupt with approve/reject/edit` |
-| 10 | RAG integration | `nodes/retrieve`, graph edges, prompt grounding | 10 (110) | `feat(rag): integrate retrieval into the graph with error-driven re-retrieval` |
-| 11 | Observability | `observability.py`, LangSmith | 8 (118) | `feat(obs): add structured run logging, usage accounting, and LangSmith tracing` |
-| 12 | CLI | `cli.py` (ingest/search/run/resume) | 9 (127) | `feat(cli): add Typer CLI with live loop display and resume` |
-| 13 | Eval harness & demo tasks | `eval/` (resumable, quota-aware) | 6 (133) | `feat(eval): add demo tasks and quota-aware RAG on/off evaluation harness` |
-| 14 | README, CI, polish | README, CI, LICENSE, cleanup | 0 (133) | `docs: add README, CI, and final polish` |
+| 6 | Sandbox & run_tests | `sandbox/*`, `nodes/run_tests` | 16 (78) | `feat(sandbox): ...` |
+| 7 | Error analysis & revise | `nodes/analyze_error,revise` | 10 (88) | `feat(agent): add analyze_error and revise nodes` |
+| 8 | Graph wiring & retry edges | `graph.py`, `nodes/terminal` | 10 (98) | `feat(graph): wire LangGraph state machine with conditional retry edges` |
+| 9 | Human-in-the-loop | `nodes/human_review`, `persistence.py` | 8 (106) | `feat(hitl): add human_review interrupt with approve/reject/edit` |
+| 10 | RAG integration | `nodes/retrieve`, graph edges, prompt grounding | 10 (116) | `feat(rag): integrate retrieval into the graph with error-driven re-retrieval` |
+| 11 | Observability | `observability.py`, LangSmith | 8 (124) | `feat(obs): add structured run logging, usage accounting, and LangSmith tracing` |
+| 12 | CLI | `cli.py` (ingest/search/run/resume) | 9 (133) | `feat(cli): add Typer CLI with live loop display and resume` |
+| 13 | Eval harness & demo tasks | `eval/` (resumable, quota-aware) | 6 (139) | `feat(eval): add demo tasks and quota-aware RAG on/off evaluation harness` |
+| 14 | README, CI, polish | README, CI, LICENSE, cleanup | 0 (139) | `docs: add README, CI, and final polish` |
 
 Opt-in tests (deselected by default): 1 `slow` (Task 3), `live` tests in Tasks 5, 8, 10 (the last also `slow`) → 4 total.
 
