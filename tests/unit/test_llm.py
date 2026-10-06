@@ -6,6 +6,7 @@ sleep durations the backoff/throttle logic requested.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -240,6 +241,15 @@ def test_daily_limit_429_fails_fast_without_retries() -> None:
         assert len(chat.calls) == 1  # ZERO retries
         assert sleep.calls == []
 
+    # (a) Daily-quota body with exact free-tier marker → zero retries.
+    quota_body = "GenerateRequestsPerDayPerProjectPerModel-FreeTier: limit"
+    error = make_rate_limit_error(body={"error": {"message": quota_body}}, message=quota_body, headers={"retry-after": "5"})
+    client, chat, sleep = make_client([error, ok_message()])
+    with pytest.raises(DailyQuotaExceeded):
+        client.invoke_text([HumanMessage(content="hi")])
+    assert len(chat.calls) == 1
+    assert sleep.calls == []
+
     # A 200-with-error body (ValueError from langchain_openai) carrying the
     # real daily text → same fail-fast, zero retries.
     client, chat, sleep = make_client([ValueError(bodies[0]), ok_message()])
@@ -247,6 +257,17 @@ def test_daily_limit_429_fails_fast_without_retries() -> None:
         client.invoke_text([HumanMessage(content="hi")])
     assert len(chat.calls) == 1
     assert sleep.calls == []
+
+
+def test_retry_delay_parsed_for_per_minute_429():
+    # (b) Per-minute 429 with retryDelay 7s → retried, wait >=7.0
+    body = '{"error":{"message":"Rate limit: PerMinute exceeded","retryDelay":"7s"}}'
+    error = make_rate_limit_error(body=json.loads(body), message="PerMinute", headers={})
+    client, chat, sleep = make_client([error, error, ok_message()])
+    result = client.invoke_text([HumanMessage(content="hi")])
+    assert result is not None
+    assert len(chat.calls) == 3  # two retries + final
+    assert any(w >= 7.0 for w in sleep.calls), f"waits={sleep.calls}"
 
 
 def test_transient_5xx_and_connection_errors_are_retried() -> None:

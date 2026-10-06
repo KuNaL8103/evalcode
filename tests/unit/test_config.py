@@ -163,7 +163,7 @@ def test_secrets_never_revealed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert str(dumped["openrouter_api_key"]) == "**********"
 
     safe = s.safe_dump()
-    assert safe["openrouter_api_key"] == "***"
+    assert safe["gemini_api_key"] == "***"
     assert FAKE_KEY not in repr(safe)
 
 
@@ -176,8 +176,11 @@ def test_env_example_and_secret_hygiene() -> None:
     }
     assert defined == {name.upper() for name in Settings.model_fields}
     # Secrets stay blank in the template
-    assert "OPENROUTER_API_KEY=" in example_lines
+    assert "GEMINI_API_KEY=" in example_lines
     assert "LLM_MODEL=" in example_lines
+    # Secret-scan: no real-looking AIza key in tracked files; template blank
+    text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "AIza" not in text or "AIza" + "FAKE" in text
 
     # .env must stay git-ignored
     try:

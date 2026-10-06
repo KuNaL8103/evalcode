@@ -83,7 +83,6 @@ def get_chat_model(settings: Settings) -> ChatOpenAI:
         max_tokens=settings.llm_max_tokens,
         timeout=settings.llm_timeout_s,
         max_retries=0,
-        default_headers={},
     )
 
 
@@ -182,7 +181,7 @@ def _error_text(exc: APIStatusError) -> str:
 
 
 class LLMClient:
-    """OpenRouter client owning throttle, budget, backoff, and error taxonomy.
+    """Gemini (OpenAI-compatible endpoint) client owning throttle, budget, backoff, and error taxonomy.
 
     Sleep, clock, and RNG are injectable so tests run instantly and can assert
     exact sleep durations.
@@ -222,7 +221,7 @@ class LLMClient:
         if self._calls >= settings.max_llm_calls_per_run:
             raise LLMBudgetExceeded(
                 f"Per-run LLM call budget exhausted ({settings.max_llm_calls_per_run} "
-                "logical calls made). Refusing to call OpenRouter; raise "
+                "logical calls made). Refusing to call Gemini; raise "
                 "MAX_LLM_CALLS_PER_RUN only if the task really needs more."
             )
         self._calls += 1
@@ -278,7 +277,7 @@ class LLMClient:
             waited_s += delay
             self._wait_s += delay
             logger.warning(
-                "OpenRouter call failed (%s); retry %d/%d in %.1fs (purpose=%s)",
+                "Gemini call failed (%s); retry %d/%d in %.1fs (purpose=%s)",
                 _short_reason(last_error),
                 attempt,
                 settings.llm_max_api_retries,
@@ -312,30 +311,30 @@ class LLMClient:
         text = _error_text(exc)
         if status == 401:
             raise LLMAuthError(
-                "OpenRouter authentication failed (HTTP 401). Set a valid "
+                "Gemini authentication failed (HTTP 401). Set a valid "
                 "GEMINI_API_KEY (https://aistudio.google.com/apikey) in .env or the environment."
             ) from exc
         if status == 403:
             raise LLMAuthError(
-                f"OpenRouter access denied (HTTP 403): your key may lack access, or "
+                f"Gemini access denied (HTTP 403): your key may lack access, or "
                 f"model '{settings.llm_model}' may be restricted to specific clients. "
                 f"Check LLM_MODEL and use a model that allows plain API-key clients "
                 f"(response: {text[:160]})."
             ) from exc
         if status == 402:
             raise LLMAuthError(
-                f"OpenRouter returned 402 Payment Required. The model '{settings.llm_model}' "
+                f"Gemini returned 402 / quota exceeded. The model '{settings.llm_model}' "
                 "may not be free — pick a ':free' model for LLM_MODEL or add credits at "
                 "https://ai.google.dev/gemini-api/docs/usage."
             ) from exc
         if status == 404:
             raise LLMModelError(
-                f"OpenRouter could not find model '{settings.llm_model}' (HTTP 404). "
+                f"Gemini could not find model '{settings.llm_model}' (HTTP 404). "
                 "Check LLM_MODEL; free models change — see https://ai.google.dev/gemini-api/docs/models."
             ) from exc
         if 400 <= status < 500 and status not in (408, 429):
             raise LLMRequestError(
-                f"OpenRouter rejected the request with HTTP {status}: {text[:200]}"
+                f"Gemini rejected the request with HTTP {status}: {text[:200]}"
             ) from exc
         # 408 / 429 / 5xx: retryable
         reason = f"HTTP {status}"
@@ -352,7 +351,7 @@ class LLMClient:
             try:
                 if hasattr(exc, "body") and exc.body:
                     body_str = str(exc.body)
-                    m = __import__("re").search(r'"retryDelay"\s*:\s*"?(\d+)s?', body_str)
+                    m = re.search(r'"retryDelay"\s*:\s*"?(\d+)s?', body_str)
                     if m:
                         retry_delay_body = float(m.group(1))
             except Exception:
@@ -384,7 +383,7 @@ class LLMClient:
         settings = self._settings
         if attempt >= settings.llm_max_api_retries:
             raise LLMUnavailable(
-                f"OpenRouter request failed after {attempt} retries "
+                f"Gemini request failed after {attempt} retries "
                 f"(limit {settings.llm_max_api_retries} per call; last: {reason}). "
                 f"Model '{settings.llm_model}' may be temporarily unavailable — "
                 "retry the run later."

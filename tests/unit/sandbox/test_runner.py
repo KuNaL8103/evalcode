@@ -17,7 +17,6 @@ from evalcode.sandbox.errors import (
     C_SANDBOX_ERROR,
     C_SYNTAX_ERROR,
     C_TIMEOUT,
-    PASS,
     classify,
     last_exception_line,
     parse_junit,
@@ -163,8 +162,6 @@ def pid_alive(pid: int) -> bool:
 
 
 def test_sandbox_infinite_loop_timeout(tmp_path):
-    import time
-
     pid_file = tmp_path / "pids.txt"
     code = f"""import os, subprocess, sys
 
