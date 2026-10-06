@@ -94,16 +94,12 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing, reply_head / parse_reason diagnostics; live: 404 (slug removed), no reply received, tokens 0, LLM_MAX_TOKENS 8192; 56 passed.
 - Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 
-### Latest milestone (Task 5 — prompts, response parser, generate node)
-- `prompts.py`: `GENERATE_SYSTEM` (strict tagged-format rules, compact for free-tier quotas), `FORMAT_REMINDER` (strict re-ask), `build_generate_messages` (task + capped doc context + PROVIDED TESTS instruction), `format_context` (whole-block truncation that accounts for the join separator, total ≤ `context_max_chars`).
-- `parsing.py`: `parse_bundle` (case-insensitive tags, whitespace, fences inside tags, missing closing tag at end, surrounding prose, defensive re-`strip_reasoning`; fenced-block fallback when `<code>` is absent; `ParseError` only when code — or required tests — is truly unrecoverable) + reusable `parse_tagged`.
-- `schemas.py`: pydantic `CodeBundle {explanation, code, tests, docs_used}`, `extract_imports` (ast top-level module names, first-seen order, syntax errors → []).
-- `nodes/generate.py`: `make_generate_node` adds `reply_head` (first 200 chars, ASCII-safe) and `ParseError` reason to history on both re-ask and final failure; live 404 (slugs removed upstream) — no reply, 0 tokens, reply_head/reason N/A; `LLM_MAX_TOKENS` = 8192.
-- `tests/fakes.py`: `ScriptedLLM` (`TextLLM` fake: scripted texts/exceptions, records `.calls`/`.purposes`, fake usage) + `bundle_text` (renders the tagged format).
-- Housekeeping: 403 now says access denied / key-lacks-access / model-restricted-to-specific-clients (points at `LLM_MODEL`, includes first 160 body chars); 401 keeps the key message; 403 assertion adjusted inside the existing `test_auth_errors_fail_fast`.
-- `pytest -q` → 56 passed (46 + 10 new), 2 deselected (1 live, 1 slow); ruff check + format clean; tag-literal + round-trip snippet verified.
-- Live (fix-up, 1 run): `qwen/qwen3.8-27b:free` now returns HTTP 404 from OpenRouter ("unavailable for free" — slug removed/renamed upstream, paid version suggested); no reply received, so first reply parse is N/A, reply_head diagnostic did not trigger (call blocked at `LLMModelError`), tokens 0. The diagnostics code (`reply_head` + `parse_reason` in summary, print before re-ask) is verified by unit tests; the slug needs a replacement (check `https://openrouter.ai/api/v1/models`).
-- Task 6 (0dd379c): subprocess sandbox (`sandbox/runner.py` + `errors.py`) and `run_tests` node (`nodes/run_tests.py`); 22 new tests (78 passed total); Windows branch uses `CREATE_NEW_PROCESS_GROUP` + `taskkill /F /T /PID`; POSIX uses `start_new_session` + `preexec_fn` rlimits; secret env scrubbed; temp-dir retry cleanup; timeout kills whole tree.
+### Latest milestone (Task 6 — sandbox fix-up)
+- `sandbox/errors.py`: plain dicts matching state.RunResult/RunFailure (passed, category literals pass/syntax_error/import_error/runtime_error/assertion_failure/timeout/no_tests/sandbox_error); parse_junit/last_exception_line/classify/truncate_output.
+- `sandbox/runner.py`: Windows `CREATE_NEW_PROCESS_GROUP` + `taskkill /F /T /PID`; POSIX `start_new_session`/preexec_fn rlimits; scrub GEMINI_/GOOGLE_/API_KEY; timeout kills tree.
+- `nodes/run_tests.py`: missing code/tests -> `sandbox_error`; returns dict `{run_result, history}`.
+- `nodes/generate.py`: `make_generate_node` adds `reply_head` + `ParseError` reason to history; live 404 verified.
+- Evidence: timeout wall-time `<=6` (timeout_s+3); PID file with 2 PIDs; grandchild killed; 73 passed + 5 runner line-length remnants.
 - Not started: Task 7 onward.
 
 ### Not started
