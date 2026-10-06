@@ -14,7 +14,7 @@ def test_run_tests_node_success():
     )
     assert "run_result" in result
     assert isinstance(result["run_result"], dict)
-    assert result["run_result"]["category"] == "passing" or result["run_result"]["tests_total"] >= 1
+    assert result["run_result"]["category"] == "pass" or result["run_result"]["tests_total"] >= 1
     assert len(result.get("history", [])) >= 1
 
 

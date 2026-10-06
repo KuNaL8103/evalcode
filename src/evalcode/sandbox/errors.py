@@ -84,11 +84,7 @@ def classify(
         "no tests" in lower or "collected 0" in lower or "test session" in lower
     ):
         return C_NO_TESTS
-    if (
-        "runtime" in lower
-        or "exception" in lower
-        or ("error" in lower and not "assertion" in lower and not "import" in lower)
-    ):
+    if "runtime" in lower or "exception" in lower or "error" in lower:
         return C_RUNTIME_ERROR
     return C_SANDBOX_ERROR
 
