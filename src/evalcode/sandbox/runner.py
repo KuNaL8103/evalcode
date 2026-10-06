@@ -15,15 +15,13 @@ from pathlib import Path
 from evalcode.config import get_settings
 from evalcode.sandbox.errors import (
     C_ASSERTION_FAILURE,
-    C_COLLECTION_ERROR,
     C_IMPORT_ERROR,
     C_NO_TESTS,
-    C_RUNTIME_EXCEPTION,
+    C_RUNTIME_ERROR,
     C_SANDBOX_ERROR,
     C_SYNTAX_ERROR,
     C_TIMEOUT,
-    RunFailure,
-    RunResult,
+    PASS,
     classify,
     parse_junit,
     truncate_output,
@@ -31,17 +29,8 @@ from evalcode.sandbox.errors import (
 
 logger = logging.getLogger(__name__)
 
-# Scrubbed env vars (do not pass to sandbox).
-_SCRUBBED_PREFIXES = (
-    "OPENROUTER_",
-    "LANGSMITH_",
-    "HF_",
-    "ANTHROPIC_",
-    "OPENAI_",
-)
 _SCRUBBED_KEYS = {
     "OPENROUTER_API_KEY",
-    "OPENROUTER_BASE_URL",
     "LANGSMITH_API_KEY",
     "LANGSMITH_TRACING",
     "HF_TOKEN",
@@ -49,12 +38,20 @@ _SCRUBBED_KEYS = {
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
     "OPENAI_API_BASE",
+    "GEMINI_API_KEY",
 }
+_SCRUBBED_PREFIXES = (
+    "GEMINI_",
+    "GOOGLE_",
+    "LANGSMITH_",
+    "HF_",
+    "ANTHROPIC_",
+    "OPENAI_",
+)
 
 
 def _scrub_env(tmpdir: str) -> dict[str, str]:
     base = dict(os.environ)
-    # Remove any key that looks like an API secret.
     for k in list(base):
         if k in _SCRUBBED_KEYS:
             base.pop(k, None)
@@ -68,7 +65,6 @@ def _scrub_env(tmpdir: str) -> dict[str, str]:
             ):
                 base.pop(k, None)
                 break
-    # Keep minimal Windows vars; point HOME/TEMP at tmpdir.
     allowed = {
         "SYSTEMROOT",
         "TEMP",
@@ -87,7 +83,6 @@ def _scrub_env(tmpdir: str) -> dict[str, str]:
     base["USERPROFILE"] = tmpdir
     base["TEMP"] = tmpdir
     base["TMP"] = tmpdir
-    # Keep SYSTEMROOT if present.
     if "SYSTEMROOT" not in base:
         base["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
     return base
@@ -119,57 +114,86 @@ def run_in_sandbox(
     *,
     timeout_s: float = 30.0,
     mem_mb: int = 128,
-) -> RunResult:
-    # Pre-flight: syntax.
+) -> dict:
+    # Pre-flight syntax
     try:
         ast.parse(code)
     except SyntaxError as exc:
-        return RunResult(
-            category=C_SYNTAX_ERROR,
-            tests_total=0,
-            tests_failed=0,
-            failures=[
-                RunFailure(test_name="preflight", error_type="SyntaxError", message=str(exc))
+        return {
+            "passed": False,
+            "category": C_SYNTAX_ERROR,
+            "exit_code": 1,
+            "timed_out": False,
+            "duration_s": 0.0,
+            "tests_total": 0,
+            "tests_failed": 0,
+            "failures": [
+                {
+                    "test_name": "preflight",
+                    "error_type": "SyntaxError",
+                    "message": str(exc),
+                    "traceback": "",
+                }
             ],
-        )
-    # Pre-flight: top-level imports.
+            "stdout": "",
+            "stderr": "",
+        }
+    # Pre-flight imports
     for mod in _top_imports(code):
         try:
             if importlib.util.find_spec(mod) is None:
-                return RunResult(
-                    category=C_IMPORT_ERROR,
-                    tests_total=0,
-                    tests_failed=0,
-                    failures=[
-                        RunFailure(
-                            test_name="preflight",
-                            error_type="ImportError",
-                            message=f"no module named {mod}",
-                        )
+                return {
+                    "passed": False,
+                    "category": C_IMPORT_ERROR,
+                    "exit_code": 1,
+                    "timed_out": False,
+                    "duration_s": 0.0,
+                    "tests_total": 0,
+                    "tests_failed": 0,
+                    "failures": [
+                        {
+                            "test_name": "preflight",
+                            "error_type": "ImportError",
+                            "message": f"no module named {mod}",
+                            "traceback": "",
+                        }
                     ],
-                )
+                    "stdout": "",
+                    "stderr": "",
+                }
         except Exception:
             pass
 
-    # Write temp files.
-    result = RunResult()
+    result: dict = {
+        "passed": False,
+        "category": C_SANDBOX_ERROR,
+        "exit_code": 1,
+        "timed_out": False,
+        "duration_s": 0.0,
+        "tests_total": 0,
+        "tests_failed": 0,
+        "failures": [],
+        "stdout": "",
+        "stderr": "",
+    }
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Write files.
         sol_path = Path(tmpdir) / "solution.py"
         test_path = Path(tmpdir) / "test_solution.py"
         try:
             sol_path.write_text(code, encoding="utf-8")
-            # Combine user tests with a minimal pytest wrapper if needed.
             test_path.write_text(tests + "\n", encoding="utf-8")
         except Exception as exc:
-            result.category = C_SANDBOX_ERROR
-            result.failures = [
-                RunFailure(test_name="setup", error_type="OSError", message=str(exc))
+            result["failures"] = [
+                {
+                    "test_name": "setup",
+                    "error_type": "OSError",
+                    "message": str(exc),
+                    "traceback": "",
+                }
             ]
             return result
 
         env = _scrub_env(tmpdir)
-        # Build pytest command.
         cmd = [
             sys.executable,
             "-E",
@@ -195,20 +219,16 @@ def run_in_sandbox(
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
             else:
-                # POSIX branch: start_new_session + preexec rlimits.
                 import resource
 
                 def _set_limits():
                     try:
-                        # CPU time ~ timeout_s * 2 (soft guard)
                         resource.setrlimit(
                             resource.RLIMIT_CPU, (int(timeout_s * 2), int(timeout_s * 2))
                         )
-                        # Address space ~ mem_mb * 2 (MB -> bytes ~ * 1024*1024)
                         resource.setrlimit(
                             resource.RLIMIT_AS, (mem_mb * 1024 * 1024 * 2, mem_mb * 1024 * 1024 * 2)
                         )
-                        # File size
                         resource.setrlimit(
                             resource.RLIMIT_FSIZE, (50 * 1024 * 1024, 50 * 1024 * 1024)
                         )
@@ -225,24 +245,24 @@ def run_in_sandbox(
                     preexec_fn=_set_limits,
                 )
             stdout_b, stderr_b = proc.communicate(timeout=timeout_s)
-            result.duration_s = time.time() - start
-            result.stdout = truncate_output(stdout_b.decode("utf-8", errors="replace"))
-            result.stderr = truncate_output(stderr_b.decode("utf-8", errors="replace"))
+            result["duration_s"] = time.time() - start
+            result["stdout"] = truncate_output(stdout_b.decode("utf-8", errors="replace"))
+            result["stderr"] = truncate_output(stderr_b.decode("utf-8", errors="replace"))
         except subprocess.TimeoutExpired:
-            result.duration_s = time.time() - start
-            result.category = C_TIMEOUT
-            result.failures = [
-                RunFailure(
-                    test_name="timeout",
-                    error_type="TimeoutExpired",
-                    message=f"exceeded {timeout_s}s",
-                )
+            result["duration_s"] = time.time() - start
+            result["category"] = C_TIMEOUT
+            result["timed_out"] = True
+            result["failures"] = [
+                {
+                    "test_name": "timeout",
+                    "error_type": "TimeoutExpired",
+                    "message": f"exceeded {timeout_s}s",
+                    "traceback": "",
+                }
             ]
-            # Kill process group / tree.
             if proc is not None:
                 try:
                     if sys.platform == "win32":
-                        # taskkill /F /T /PID <pid>
                         subprocess.run(
                             ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                             capture_output=True,
@@ -257,11 +277,10 @@ def run_in_sandbox(
                             pass
                 except Exception:
                     pass
-            # Wait for cleanup.
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
             return result
         finally:
             if proc is not None and proc.poll() is None:
@@ -281,113 +300,64 @@ def run_in_sandbox(
                             pass
                 except Exception:
                     pass
-        # After completed run.
-        if proc is not None and proc.returncode != 0:
-            # Could be collection error or test failures.
-            pass
-        # Parse junit XML if present.
         report_path = Path(tmpdir) / "report.xml"
         if report_path.exists():
             total, failed, failures = parse_junit(str(report_path))
-            result.tests_total = total
-            result.tests_failed = failed
-            result.failures = failures if failures else []
-            # If no tests collected but exit non-zero and failures empty.
+            result["tests_total"] = total
+            result["tests_failed"] = failed
+            result["failures"] = failures if failures else []
             if total == 0:
-                result.category = C_NO_TESTS
-                result.failures = [
-                    RunFailure(
-                        test_name="collection", error_type="NoTests", message="no tests collected"
-                    )
+                result["category"] = C_NO_TESTS
+                result["failures"] = [
+                    {
+                        "test_name": "collection",
+                        "error_type": "NoTests",
+                        "message": "no tests collected",
+                        "traceback": "",
+                    }
                 ]
+                result["passed"] = False
             elif failed > 0:
-                # Classify based on first failure traceback / stdout.
-                tb_text = ""
-                for f in result.failures:
-                    tb_text += f.traceback_tail
-                result.category = classify(tb_text, result.stdout, result.stderr, total, failed)
+                tb_text = "".join(f.get("traceback", "") for f in result["failures"])
+                result["category"] = classify(
+                    tb_text, result["stdout"], result["stderr"], total, failed
+                )
+                result["passed"] = False
             else:
-                result.category = C_SANDBOX_ERROR if (proc.returncode not in (0, 1)) else "passing"
-                if result.category not in (
-                    C_SANDBOX_ERROR,
-                    C_SYNTAX_ERROR,
-                    C_IMPORT_ERROR,
-                    C_TIMEOUT,
-                    C_NO_TESTS,
-                    C_COLLECTION_ERROR,
-                ):
-                    result.category = "passing"
-            if result.category == "passing":
-                result.category = "passing"
+                result["category"] = PASS
+                result["passed"] = True
+                result["exit_code"] = proc.returncode if proc and proc.returncode is not None else 0
         else:
-            # No junit report produced — likely a crash/collection failure.
-            combined = result.stdout + result.stderr
+            combined = result["stdout"] + result["stderr"]
             total = 0
-            failed = 0
-            # Try to detect collection errors from stderr.
-            if "test session" in combined.lower():
-                total = 0
-            result.tests_total = total
-            result.tests_failed = failed
-            result.category = classify("", result.stdout, result.stderr, total, failed)
-            if result.category == C_SANDBOX_ERROR and (
-                proc.returncode is not None and proc.returncode not in (0, 1)
+            result["tests_total"] = total
+            result["tests_failed"] = 0
+            result["category"] = classify("", result["stdout"], result["stderr"], total, 0)
+            if (
+                result["category"] == C_SANDBOX_ERROR
+                and proc is not None
+                and proc.returncode not in (0, 1)
             ):
-                # Keep sandbox_error.
                 pass
-        # Ensure category is a valid literal if unclassified.
-        valid = {
+        if result["category"] not in (
+            PASS,
             C_SYNTAX_ERROR,
             C_IMPORT_ERROR,
+            C_RUNTIME_ERROR,
             C_ASSERTION_FAILURE,
-            C_RUNTIME_EXCEPTION,
             C_TIMEOUT,
-            C_COLLECTION_ERROR,
-            C_SANDBOX_ERROR,
             C_NO_TESTS,
-            "passing",
-        }
-        if result.category not in valid:
-            result.category = C_SANDBOX_ERROR
-        # If tests failed but category stayed sandbox_error, refine.
-        if result.tests_failed > 0 and result.category == C_SANDBOX_ERROR:
-            # Try to infer from failure messages.
-            for f in result.failures:
-                if f.error_type == "AssertionError":
-                    result.category = C_ASSERTION_FAILURE
+            C_SANDBOX_ERROR,
+        ):
+            result["category"] = C_SANDBOX_ERROR
+        if result["tests_failed"] > 0 and result["category"] == C_SANDBOX_ERROR:
+            for f in result["failures"]:
+                if f.get("error_type") == "AssertionError":
+                    result["category"] = C_ASSERTION_FAILURE
                     break
-                if f.error_type == "ImportError" or f.error_type == "ModuleNotFoundError":
-                    result.category = C_IMPORT_ERROR
+                if f.get("error_type") in ("ImportError", "ModuleNotFoundError"):
+                    result["category"] = C_IMPORT_ERROR
                     break
-        # Clean up temp dir with retry on Windows file-lock errors.
-        # TemporaryDirectory already cleaned; retry once if needed (log only).
-        try:
-            # Already removed by TemporaryDirectory exit; if leftover, try.
-            for p in Path(tmpdir).rglob("*"):
-                try:
-                    if p.is_file():
-                        p.unlink()
-                    elif p.is_dir():
-                        p.rmdir()
-                except PermissionError:
-                    # Windows file-lock: retry once after short delay.
-                    import time as _t
-
-                    _t.sleep(0.2)
-                    try:
-                        if p.is_file():
-                            p.unlink()
-                        elif p.is_dir():
-                            p.rmdir()
-                    except Exception:
-                        pass
-            Path(tmpdir).rmdir()
-        except Exception:
-            logger.warning("sandbox temp-dir cleanup failed for %s", tmpdir)
-    if sys.platform != "win32" and mem_mb > 0:
-        # POSIX-only memory limit already applied; skip rlimit warning.
-        pass
-    else:
-        if mem_mb > 0 and sys.platform == "win32":
+        if sys.platform == "win32" and mem_mb > 0:
             logger.warning("sandbox: rlimits skipped on Windows (wall-clock timeout only)")
     return result
