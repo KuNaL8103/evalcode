@@ -96,7 +96,7 @@ def make_timeout_error() -> APITimeoutError:
 
 
 class ScriptedLLM:
-    """``TextLLM`` fake for node tests: scripted replies, no OpenRouter.
+    """``TextLLM`` fake for node tests: scripted replies, no network.
 
     Each script item is either the response text (``str``) or an exception
     instance to raise. Every call's messages list is recorded in ``calls``

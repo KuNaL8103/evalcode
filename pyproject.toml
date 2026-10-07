@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "evalcode"
 version = "0.1.0"
-description = "Iterative code-generation agent: RAG + LangGraph with an OpenRouter free model, sandboxed tests, and a bounded retry loop."
+description = "Iterative code-generation agent: RAG + LangGraph with a Gemini free-tier model, sandboxed tests, and a bounded retry loop."
 requires-python = ">=3.11"
 dependencies = [
     "langgraph",
@@ -49,7 +49,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "live: real OpenRouter calls (needs OPENROUTER_API_KEY; consumes free quota)",
+    "live: real Gemini calls (needs GEMINI_API_KEY; consumes free quota)",
     "slow: downloads the real embedding model",
 ]
 addopts = "-m 'not live and not slow'"

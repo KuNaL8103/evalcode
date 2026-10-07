@@ -1,10 +1,11 @@
 """Gemini LLM access layer (ARCHITECTURE §5).
 
-The only provider is Gemini (free models via OpenAI-compatible endpoint). ``get_chat_model`` builds a
-``ChatOpenAI`` with SDK retries disabled (``max_retries=0``); ``LLMClient``
-owns the whole retry policy: throttle, per-run call budget, exponential
-backoff + jitter, ``Retry-After``/``X-RateLimit-Reset`` handling, daily-quota
-fail-fast, an actionable error taxonomy, and usage extraction.
+The only provider is Gemini (free models via OpenAI-compatible endpoint).
+``get_chat_model`` builds a ``ChatOpenAI`` with SDK retries disabled
+(``max_retries=0``); ``LLMClient`` owns the whole retry policy: throttle,
+per-run call budget, exponential backoff + jitter,
+``Retry-After``/``X-RateLimit-Reset`` handling, daily-quota fail-fast,
+an actionable error taxonomy, and usage extraction.
 
 Sleep/clock/RNG are injectable so tests run instantly. Message contents are
 never logged at INFO; retries/waits log at WARNING without secrets.
@@ -56,6 +57,10 @@ THINK_CLOSE = "</" + "think" + ">"
 _THINK_BLOCK_RE = re.compile(THINK_OPEN + r"\s*.*?" + THINK_CLOSE, re.DOTALL)
 _THINK_TRAILING_RE = re.compile(THINK_OPEN + r"\s*.*\Z", re.DOTALL)
 
+# Gemini puts retryDelay in the error body; str(dict) uses single
+# quotes, so accept both quote styles.
+_RETRY_DELAY_RE = re.compile(r"""["']retryDelay["']\s*:\s*["']?(\d+(?:\.\d+)?)s?""")
+
 # Case-insensitive markers that a 429 refers to the *daily* free quota.
 _DAILY_LIMIT_KEYWORDS = (
     "per-day",
@@ -83,6 +88,7 @@ def get_chat_model(settings: Settings) -> ChatOpenAI:
         max_tokens=settings.llm_max_tokens,
         timeout=settings.llm_timeout_s,
         max_retries=0,
+        default_headers={"X-Title": "evalcode"},
     )
 
 
@@ -181,10 +187,11 @@ def _error_text(exc: APIStatusError) -> str:
 
 
 class LLMClient:
-    """Gemini (OpenAI-compatible endpoint) client owning throttle, budget, backoff, and error taxonomy.
+    """Gemini (OpenAI-compatible endpoint) client owning throttle, budget,
+    backoff, and error taxonomy.
 
-    Sleep, clock, and RNG are injectable so tests run instantly and can assert
-    exact sleep durations.
+    Sleep, clock, and RNG are injectable so tests run instantly and can
+    assert exact sleep durations.
     """
 
     def __init__(
@@ -324,8 +331,8 @@ class LLMClient:
         if status == 402:
             raise LLMAuthError(
                 f"Gemini returned 402 / quota exceeded. The model '{settings.llm_model}' "
-                "may not be free — pick a ':free' model for LLM_MODEL or add credits at "
-                "https://ai.google.dev/gemini-api/docs/usage."
+                "may require billing or more quota. Check your Gemini API billing and quota: "
+                "https://ai.google.dev/gemini-api/docs/rate-limits."
             ) from exc
         if status == 404:
             raise LLMModelError(
@@ -351,7 +358,7 @@ class LLMClient:
             try:
                 if hasattr(exc, "body") and exc.body:
                     body_str = str(exc.body)
-                    m = re.search(r'"retryDelay"\s*:\s*"?(\d+)s?', body_str)
+                    m = _RETRY_DELAY_RE.search(body_str)
                     if m:
                         retry_delay_body = float(m.group(1))
             except Exception:

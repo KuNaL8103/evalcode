@@ -2,7 +2,7 @@
 
 Makes at most 2 calls (one strict re-ask only if the first reply is
 unparseable) on the DEFAULT free model. Skips with a clear reason when
-``OPENROUTER_API_KEY`` is unavailable.
+``GEMINI_API_KEY`` is unavailable.
 """
 
 from __future__ import annotations
@@ -31,13 +31,13 @@ def _read_key() -> str:
     and hides the real .env from ``evalcode.config``; a live test deliberately
     opts back in through the raw dotenv helpers.
     """
-    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
     if key:
         return key
     env_file = find_dotenv(usecwd=True)
     if env_file:
         values = dotenv_values(env_file)
-        return str(values.get("OPENROUTER_API_KEY") or "").strip()
+        return str(values.get("GEMINI_API_KEY") or "").strip()
     return ""
 
 
@@ -45,9 +45,9 @@ def _read_key() -> str:
 def test_live_generate_add_function() -> None:
     key = _read_key()
     if not key:
-        pytest.skip("OPENROUTER_API_KEY not set (env or .env); live test needs it")
+        pytest.skip("GEMINI_API_KEY not set (env or .env); live test needs it")
     settings = Settings(
-        openrouter_api_key=SecretStr(key),
+        gemini_api_key=SecretStr(key),
         llm_model=DEFAULT_MODEL,
         llm_min_interval_s=0.0,
     )

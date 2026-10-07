@@ -12,7 +12,6 @@ import tempfile
 import time
 from pathlib import Path
 
-from evalcode.config import get_settings
 from evalcode.sandbox.errors import (
     C_ASSERTION_FAILURE,
     C_IMPORT_ERROR,
@@ -327,7 +326,6 @@ def run_in_sandbox(
                 result["passed"] = True
                 result["exit_code"] = proc.returncode if proc and proc.returncode is not None else 0
         else:
-            combined = result["stdout"] + result["stderr"]
             total = 0
             result["tests_total"] = total
             result["tests_failed"] = 0

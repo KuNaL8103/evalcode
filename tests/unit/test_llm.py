@@ -33,12 +33,12 @@ from tests.fakes import (
 )
 
 # Built at runtime so the secret-scan hygiene test never sees a literal key.
-FAKE_KEY = "sk-or-v1-" + "FAKE" * 6
+FAKE_KEY = "AIza" + "FAKE" * 8
 
 
 def make_settings(**overrides: Any) -> Settings:
     defaults: dict[str, Any] = dict(
-        openrouter_api_key=SecretStr(FAKE_KEY),
+        gemini_api_key=SecretStr(FAKE_KEY),
         llm_min_interval_s=0.0,
         llm_backoff_base_s=2.0,
         llm_backoff_max_s=60.0,
@@ -139,13 +139,13 @@ def test_extract_usage_and_strip_reasoning() -> None:
 
 def test_get_chat_model_configuration() -> None:
     settings = make_settings(
-        llm_model="qwen/qwen3.8-27b:free",
-        openrouter_base_url="https://openrouter.ai/api/v1",
+        llm_model="gemini-3.5-flash-lite",
+        llm_base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         llm_timeout_s=55.5,
     )
     model = get_chat_model(settings)
-    assert model.model_name == "qwen/qwen3.8-27b:free"
-    assert model.openai_api_base == "https://openrouter.ai/api/v1"
+    assert model.model_name == "gemini-3.5-flash-lite"
+    assert model.openai_api_base == "https://generativelanguage.googleapis.com/v1beta/openai/"
     assert model.max_retries == 0  # SDK retries disabled; LLMClient owns retries
     assert model.temperature == settings.llm_temperature
     assert model.max_tokens == settings.llm_max_tokens
@@ -159,12 +159,12 @@ def test_get_chat_model_configuration() -> None:
 
 def test_invoke_success_returns_text_and_usage() -> None:
     client, chat, sleep = make_client(
-        [ok_message("done", response_metadata={"model_name": "qwen"})]
+        [ok_message("done", response_metadata={"model_name": "gemini-3.5-flash-lite"})]
     )
     messages = [HumanMessage(content="say done")]
     response = client.invoke_text(messages, purpose="generate")
     assert response.text == "done"
-    assert response.model == "qwen"
+    assert response.model == "gemini-3.5-flash-lite"
     assert response.waited_s == 0.0
     assert response.usage["total_tokens"] == 5
     assert response.usage["estimated_calls"] == 0
@@ -222,9 +222,9 @@ def test_wait_above_max_wait_raises_daily_quota() -> None:
 
 
 def test_daily_limit_429_fails_fast_without_retries() -> None:
-    # Bodies loop: the real OpenRouter free-tier text plus the other markers.
+    # Bodies loop: the legacy free-tier daily text plus the other markers.
     bodies = [
-        # The REAL OpenRouter 429 text (implicit concatenation stays verbatim).
+        # The legacy free-tier 429 text (implicit concatenation stays verbatim).
         "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock "
         "1000 free model requests per day",
         "You have reached your per-day request limit",
@@ -260,16 +260,18 @@ def test_daily_limit_429_fails_fast_without_retries() -> None:
     assert len(chat.calls) == 1
     assert sleep.calls == []
 
-
-def test_retry_delay_parsed_for_per_minute_429():
-    # (b) Per-minute 429 with retryDelay 7s → retried, wait >=7.0
+    # (b) Per-minute 429 with retryDelay 7s → retried, wait >=7.0.
+    # Pass a larger llm_max_wait_s so the 7s wait doesn't trigger DailyQuotaExceeded.
     body = '{"error":{"message":"Rate limit: PerMinute exceeded","retryDelay":"7s"}}'
     error = make_rate_limit_error(body=json.loads(body), message="PerMinute", headers={})
-    client, chat, sleep = make_client([error, error, ok_message()])
+    client, chat, sleep = make_client(
+        [error, error, ok_message()],
+        make_settings(llm_max_wait_s=15.0),
+    )
     result = client.invoke_text([HumanMessage(content="hi")])
     assert result is not None
     assert len(chat.calls) == 3  # two retries + final
-    assert len(sleep.calls) >= 1
+    assert any(w >= 7.0 for w in sleep.calls), f"waits={sleep.calls}"
 
 
 def test_transient_5xx_and_connection_errors_are_retried() -> None:
@@ -293,7 +295,7 @@ def test_transient_5xx_and_connection_errors_are_retried() -> None:
 def test_auth_errors_fail_fast() -> None:
     # 401 → key hint; 403 → access may be model-restricted, so point at LLM_MODEL;
     # 402 → hint about credits
-    cases = ((401, "GEMINI_API_KEY"), (403, "LLM_MODEL"), (402, "credits"))
+    cases = ((401, "GEMINI_API_KEY"), (403, "LLM_MODEL"), (402, "billing"))
     for status, hint in cases:
         client, chat, sleep = make_client([make_status_error(status)])
         with pytest.raises(LLMAuthError) as excinfo:
@@ -308,7 +310,7 @@ def test_missing_model_raises_model_error() -> None:
         [
             make_status_error(
                 404,
-                body={"error": {"message": "No endpoints found for qwen/does-not-exist:free"}},
+                body={"error": {"message": "No endpoints found for gemini/does-not-exist:free"}},
             ),
             ok_message(),
         ]

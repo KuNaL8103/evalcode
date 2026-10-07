@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from evalcode.config import Settings
-from evalcode.sandbox.errors import C_SANDBOX_ERROR, PASS
+from evalcode.sandbox.errors import C_SANDBOX_ERROR
 from evalcode.sandbox.runner import run_in_sandbox
 from evalcode.state import AgentState
 

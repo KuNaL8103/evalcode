@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore", env_ignore_empty=True)
 
-    # --- OpenRouter / LLM ---
+    # --- Gemini / LLM ---
     gemini_api_key: SecretStr | None = None
     llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     llm_model: str = "gemini-3.5-flash-lite"
