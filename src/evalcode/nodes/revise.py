@@ -53,7 +53,9 @@ def make_revise_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState],
         retries_used = state.get("retries_used", 0) + (0 if human_driven else 1)
 
         provided_tests = state.get("provided_tests") or ""
-        require_tests = not provided_tests.strip()
+        # When provided_tests is set, tests are fixed ground truth -> require them.
+        # When provided_tests is empty, missing <tests> in reply is OK -> keep state["tests"].
+        require_tests = bool(provided_tests.strip())
 
         messages = build_revise_messages(state, context_max_chars=settings.context_max_chars)
         usage: TokenUsage = {}
@@ -70,7 +72,7 @@ def make_revise_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState],
         try:
             bundle = parse_bundle(response.text, require_tests=require_tests)
         except ParseError:
-            # Exactly one strict re-ask
+            # Exactly one strict re-ask (only when require_tests=True)
             reasks = 1
             _reply_head(response.text)
             reask = [
@@ -90,7 +92,7 @@ def make_revise_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState],
                     attempt, usage, reasks, human_driven, second.text, str(exc2)
                 )
 
-        # Determine tests
+        # Determine tests: 1) provided_tests (verbatim), 2) bundle.tests, 3) state["tests"]
         if provided_tests.strip():
             tests_result = provided_tests
         elif bundle and bundle.tests.strip():

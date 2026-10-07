@@ -94,6 +94,7 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing, reply_head / parse_reason diagnostics; live: 404 (slug removed), no reply received, tokens 0, LLM_MAX_TOKENS 8192; 56 passed.
 - Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 - Task 7: error analysis + revise nodes — `analysis.py`, `nodes/analyze_error.py`, `nodes/revise.py`, revise prompt in `prompts.py`; 10 new tests (88).
+- Task 7b: fix-up of Task 7 (no error_type use, category mapping for collection errors, restored tests); 88 tests.
 
 ### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
 - RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.
@@ -102,6 +103,7 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; set `GEMINI_API_KEY` in `.env` (git-ignored).
 - Tests: 88 passed; ruff clean.
 - Sandbox writes `solution.py` and `test_solution.py` separately; generated tests import via `from solution import ...` (see prompts.py).
+- Known Task 6 issue: collection errors come back as category `pass` with `passed` false and exit_code 2; routing (Task 8) MUST use `run_result['passed']`, not `category`. Fix classify() in a separate task.
 - Not started: Task 8 onward.
 
 ### Not started

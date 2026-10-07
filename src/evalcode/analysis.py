@@ -104,7 +104,8 @@ def _extract_exception_type_and_message(exception_text: str) -> tuple[str, str]:
             m = re.match(r"([A-Za-z_][A-Za-z0-9_\.]*?(?:Error|Exception))\s*:\s*(.*)", s)
             if m:
                 return m.group(1), m.group(2).strip()
-            return s[:120], ""
+            # Last resort: return "Exception" as type, truncated line as message
+            return "Exception", s[:120]
 
     return "Exception", ""
 
@@ -212,6 +213,46 @@ def _extract_suspect_symbols(exception_text: str, exception_type: str) -> list[s
     return symbols[:5]
 
 
+def extract_exception(run_result: dict[str, Any] | None) -> tuple[str, str]:
+    """Extract (exception_type, message) from a run_result.
+
+    Priority:
+    1. failures[0].traceback (if present and yields a real exception type)
+    2. failures[0].message (if present)
+    3. run_result["stdout"] (collection errors)
+    4. run_result["stderr"]
+
+    Delegates to _extract_exception_type_and_message for parsing.
+    Never reads failures[].error_type (it is hardcoded in parse_junit).
+    """
+    if not run_result:
+        return "Exception", ""
+
+    # Try failures first - prefer traceback for exception type
+    failures = run_result.get("failures") or []
+    for f in failures:
+        tb = f.get("traceback") or ""
+        msg = f.get("message") or ""
+        if tb.strip():
+            exc_type, exc_msg = _extract_exception_type_and_message(tb)
+            # If traceback yields a real exception type (not generic "Exception"), use it
+            if exc_type != "Exception" or exc_msg:
+                return exc_type, exc_msg
+        if msg.strip():
+            return _extract_exception_type_and_message(msg.strip())
+
+    # Collection errors: exception only in stdout/stderr
+    stdout = run_result.get("stdout") or ""
+    if stdout.strip():
+        return _extract_exception_type_and_message(stdout.strip())
+
+    stderr = run_result.get("stderr") or ""
+    if stderr.strip():
+        return _extract_exception_type_and_message(stderr.strip())
+
+    return "Exception", ""
+
+
 def _build_retrieval_queries(
     exception_text: str, suspect_symbols: list[str], category: str
 ) -> list[str]:
@@ -249,9 +290,41 @@ def _determine_category(
         return "unknown"
 
     passed = run_result.get("passed")
+    base_category = run_result.get("category") or "unknown"
+
     # If truly passed with no exception text, return "pass"
     if passed and not exception_text.strip():
         return "pass"
+
+    # Collection error: sandbox reports category "pass" with exit_code 2,
+    # empty failures, but exception text in stdout/stderr.
+    # Map from the extracted exception type. Trigger on the sandbox's
+    # collection-error signature: category="pass", exit_code=2, empty failures.
+    is_collection_error = (
+        base_category == "pass"
+        and exception_text.strip()
+        and run_result.get("exit_code") == 2
+        and not (run_result.get("failures") or [])
+    )
+    if is_collection_error:
+        # Map from exception type - never return "pass" for collection errors
+        if exception_type == "SyntaxError":
+            return "syntax_error"
+        if exception_type == "AssertionError":
+            return "assertion_failure"
+        if exception_type in ("ImportError", "ModuleNotFoundError"):
+            # For ImportError, check if it's api_misuse (from non-solution module)
+            lower_text = exception_text.lower()
+            if "cannot import name" in lower_text:
+                m = _IMPORT_NAME_ERROR_RE.search(exception_text)
+                if m:
+                    from_module = m.group(2)
+                    if from_module != "solution":
+                        return "api_misuse"
+            # "No module named" or from 'solution' -> import_error
+            return "import_error"
+        # Anything else -> runtime_error (will be checked for api_misuse below)
+        base_category = "runtime_error"
 
     # Derive category from exception text when available
     if exception_text:
@@ -261,25 +334,32 @@ def _determine_category(
         if "no module named" in lower_text:
             return "import_error"
 
-        # Check for "missing definition from 'solution'" - precise patterns
-        # "cannot import name X from 'solution'" or "module 'solution' has no attribute"
-        is_missing_from_solution = (
-            "from 'solution'" in lower_text or "module 'solution'" in lower_text
-        )
+        # api_misuse overrides base ONLY when ALL conditions met:
+        # - AttributeError matching "module 'M' has no attribute 'A'" with M != "solution"
+        # - ImportError matching "cannot import name 'N' from 'M'" with M != "solution"
+        # - TypeError with call-signature patterns
+        # Missing definition from 'solution' (module name "solution") is NOT api_misuse
 
-        # AttributeError on module -> api_misuse
+        # AttributeError on module -> api_misuse (unless module is "solution")
         if exception_type == "AttributeError":
-            # Exception: if message names module 'solution' as the source -> missing definition
-            if is_missing_from_solution:
-                return run_result.get("category") or "runtime_error"
-            return "api_misuse"
+            m = _ATTR_ERROR_RE.search(exception_text)
+            if m:
+                module_name = m.group(1)
+                if module_name != "solution":
+                    return "api_misuse"
+            # If no match or module is "solution", fall through to base_category
 
-        # ImportError "cannot import name X from Y" -> api_misuse (unless from 'solution')
+        # ImportError "cannot import name N from M" -> api_misuse (unless M is "solution")
         if exception_type == "ImportError":
             if "cannot import name" in lower_text and "from 'solution'" in lower_text:
                 return run_result.get("category") or "import_error"
             if "cannot import name" in lower_text:
-                return "api_misuse"
+                m = _IMPORT_NAME_ERROR_RE.search(exception_text)
+                if m:
+                    from_module = m.group(2)
+                    if from_module != "solution":
+                        return "api_misuse"
+                # If from 'solution' or no match, fall through
             # Other ImportError -> import_error
             return "import_error"
 
@@ -287,7 +367,7 @@ def _determine_category(
         if exception_type == "ModuleNotFoundError":
             return "import_error"
 
-        # TypeError with call-signature patterns -> api_misuse (unless names 'solution')
+        # TypeError with call-signature patterns -> api_misuse
         if exception_type == "TypeError":
             signature_patterns = [
                 "unexpected keyword argument",
@@ -298,8 +378,6 @@ def _determine_category(
                 "invalid keyword argument",
             ]
             if any(p in lower_text for p in signature_patterns):
-                if is_missing_from_solution:
-                    return run_result.get("category") or "runtime_error"
                 return "api_misuse"
 
         # AssertionError -> assertion_failure
@@ -310,26 +388,27 @@ def _determine_category(
         if exception_type == "SyntaxError":
             return "syntax_error"
 
-        # Timeout -> timeout
-        if exception_type == "TimeoutExpired" or "timeout" in lower_text:
+        # Timeout comes ONLY from run_result["category"] (sandbox), not from free text
+        if exception_type == "TimeoutExpired":
             return "timeout"
 
-        # Other known categories from sandbox
-        sandbox_category = run_result.get("category")
-        if sandbox_category in (
-            "pass",
-            "syntax_error",
-            "import_error",
-            "runtime_error",
-            "assertion_failure",
-            "timeout",
-            "no_tests",
-            "sandbox_error",
-        ):
-            return sandbox_category
-
-    # Fallback to sandbox category
-    return run_result.get("category") or "unknown"
+    # Return the (possibly mapped) base category
+    # Valid categories: 8 sandbox literals + "api_misuse" + "unknown"
+    valid_categories = {
+        "pass",
+        "syntax_error",
+        "import_error",
+        "runtime_error",
+        "assertion_failure",
+        "timeout",
+        "no_tests",
+        "sandbox_error",
+        "api_misuse",
+        "unknown",
+    }
+    if base_category in valid_categories:
+        return base_category
+    return "unknown"
 
 
 def _determine_fault(
@@ -376,8 +455,15 @@ def _determine_fault(
     return "unknown"
 
 
-def _make_root_cause(category: str, exception_text: str, exception_type: str) -> str:
-    """Generate root_cause string (<= 200 chars)."""
+def _make_root_cause(
+    category: str, exception_text: str, exception_type: str, suspect_symbols: list[str]
+) -> str:
+    """Generate root_cause string (<= 200 chars).
+
+    For module-attribute errors (AttributeError "module 'M' has no attribute 'A'"),
+    include the dotted name "M.A" (e.g., "math.sqroot") in addition to the
+    exception type.
+    """
     if not exception_text:
         if category == "timeout":
             return "Execution exceeded the sandbox time limit (possible infinite loop)."
@@ -391,6 +477,19 @@ def _make_root_cause(category: str, exception_text: str, exception_type: str) ->
 
     # Prefer the concise exception message over the full traceback
     _, exc_msg = _extract_exception_type_and_message(exception_text)
+
+    # For api_misuse with module-attribute errors, include dotted symbol in root_cause
+    if category == "api_misuse" and exception_type == "AttributeError":
+        # Find the first suspect_symbol that looks like "M.A"
+        for sym in suspect_symbols:
+            if "." in sym and not sym.endswith("()"):
+                # This is likely a module.attribute pair
+                if exc_msg:
+                    cause = f"{exception_type}: {exc_msg} (symbol: {sym})"
+                else:
+                    cause = f"{exception_type}: {sym}"
+                return cause[:200]
+
     if exc_msg:
         cause = f"{exception_type}: {exc_msg}"
     else:
@@ -458,9 +557,10 @@ def analyze_run_result(
 
     This is the pure deterministic analysis function. It never calls an LLM.
     """
-    # Extract exception text
+    # Extract exception type and message
+    exception_type, exception_message = extract_exception(run_result)
+    # Reconstruct exception_text for downstream functions that need full text
     exception_text = _extract_exception_text(run_result)
-    exception_type, exception_message = _extract_exception_type_and_message(exception_text)
 
     # Determine category
     category = _determine_category(run_result, exception_text, exception_type)
@@ -481,7 +581,7 @@ def analyze_run_result(
     fault = _determine_fault(run_result, category, deepest_file, provided_tests, exception_text)
 
     # Build root_cause and fix_plan
-    root_cause = _make_root_cause(category, exception_text, exception_type)
+    root_cause = _make_root_cause(category, exception_text, exception_type, suspect_symbols)
     fix_plan = _make_fix_plan(category, fault, suspect_symbols, provided_tests)
 
     return ErrorAnalysis(

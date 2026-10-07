@@ -168,14 +168,9 @@ def test_revise_respects_provided_tests_and_missing_tests() -> None:
     update1 = node1(state1)
     assert update1["tests"] == PROVIDED_TESTS  # raw value from state (includes trailing newline)
 
-    # Case 2: no provided_tests, model returns NO tests tag on first call (parse error),
-    # then returns valid tests on re-ask -> success with re-ask tests
-    llm2 = ScriptedLLM(
-        [
-            bundle_text(CODE_V2, tests=None, explanation="no tests tag"),
-            bundle_text(CODE_V2, TESTS_V2, explanation="fixed with tests"),
-        ]
-    )
+    # Case 2: no provided_tests, model returns code but NO <tests> tag ->
+    # keep state["tests"] unchanged, no re-ask (per FIX 5)
+    llm2 = ScriptedLLM([bundle_text(CODE_V2, tests=None, explanation="no tests tag")])
     node2 = make_revise_node(llm2, make_settings())
 
     state2 = {
@@ -190,8 +185,9 @@ def test_revise_respects_provided_tests_and_missing_tests() -> None:
     }
     update2 = node2(state2)
     assert update2["status"] == "running"
-    assert update2["tests"] == TESTS_V2.strip()
-    assert update2["history"][0]["summary"]["reasks"] == 1
+    assert update2["tests"] == TESTS_V1  # state value, no strip
+    assert update2["history"][0]["summary"]["reasks"] == 0
+    assert len(llm2.calls) == 1  # exactly one LLM call, no re-ask
 
 
 def test_revise_failure_paths() -> None:
@@ -262,35 +258,51 @@ def test_revise_failure_paths() -> None:
 
 def test_revise_prompt_contents_and_bounds() -> None:
     """Build prompt with long content and verify bounds and sections."""
+    from evalcode.nodes.analyze_error import make_analyze_error_node
     from evalcode.prompts import build_revise_messages
 
     long_traceback = "x" * 3000
     long_stdout = "y" * 1000
     long_stderr = "z" * 1000
 
+    run_result = {
+        "passed": False,
+        "category": "assertion_failure",
+        "exit_code": 1,
+        "timed_out": False,
+        "duration_s": 2.0,
+        "tests_total": 1,
+        "tests_failed": 1,
+        "failures": [
+            {
+                "test_name": "test_add",
+                "error_type": "assertion_failure",
+                "message": "assert 3 == 4",
+                "traceback": long_traceback,
+            }
+        ],
+        "stdout": long_stdout,
+        "stderr": long_stderr,
+    }
+
+    # Generate real analyze_error history events for attempts 1..5
+    analyze_node = make_analyze_error_node(None, make_settings())
+    history_events = []
+    for i in range(1, 6):
+        state_for_analyze = {
+            "run_result": run_result,
+            "code": CODE_V1,
+            "tests": TESTS_V1,
+            "attempt": i,
+        }
+        update = analyze_node(state_for_analyze)
+        history_events.append(update["history"][0])
+
     state = {
         "task": "add(a, b)",
         "code": CODE_V1,
         "tests": TESTS_V1,
-        "run_result": {
-            "passed": False,
-            "category": "assertion_failure",
-            "exit_code": 1,
-            "timed_out": False,
-            "duration_s": 2.0,
-            "tests_total": 1,
-            "tests_failed": 1,
-            "failures": [
-                {
-                    "test_name": "test_add",
-                    "error_type": "assertion_failure",
-                    "message": "assert 3 == 4",
-                    "traceback": long_traceback,
-                }
-            ],
-            "stdout": long_stdout,
-            "stderr": long_stderr,
-        },
+        "run_result": run_result,
         "error_analysis": {
             "category": "assertion_failure",
             "root_cause": "AssertionError: assert 3 == 4",
@@ -304,14 +316,7 @@ def test_revise_prompt_contents_and_bounds() -> None:
         "retries_used": 2,
         "human_feedback": "please fix this",
         "retrieved_docs": RETRIEVED_DOCS,
-        "history": [
-            {
-                "node": "analyze_error",
-                "attempt": i,
-                "summary": {"category": "assertion_failure", "root_cause": "c"},
-            }
-            for i in range(1, 6)
-        ],
+        "history": history_events,
     }
 
     messages = build_revise_messages(state, context_max_chars=1500)
@@ -333,9 +338,25 @@ def test_revise_prompt_contents_and_bounds() -> None:
     assert "attempt 1:" not in human_content
     assert "attempt 2:" not in human_content
 
-    # Traceback excerpt <= 1500 chars (plus "Traceback (tail):\n" prefix)
-    traceback_section = human_content.split("Traceback (tail):")[1].split("\n\n")[0]
-    assert len(traceback_section) <= 1510  # 1500 + small prefix
+    # Verify real history events have the keys revise reads
+    for h in history_events:
+        assert h["node"] == "analyze_error"
+        assert "attempt" in h
+        assert "summary" in h
+        assert "category" in h["summary"]
+        assert "root_cause" in h["summary"]
+
+    # Traceback excerpt <= 1500 chars (text after "Traceback (tail):\n" up to next section)
+    traceback_section = human_content.split("Traceback (tail):\n")[1].split("\n\n")[0]
+    assert len(traceback_section) <= 1500
 
     # Total prompt < 10000 chars
     assert len(human_content) < 10000
+
+    # FIX 7c: prompt contains exception type (AssertionError) and does NOT
+    # contain "assertion_failure: " after "Exception: " (proves FIX 1)
+    assert "AssertionError" in human_content
+    exception_line = human_content.split("Exception: ")[1].split("\n")[0]
+    assert not exception_line.startswith("assertion_failure: "), (
+        f"Exception line should not start with 'assertion_failure: ', got: {exception_line}"
+    )

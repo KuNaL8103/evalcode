@@ -333,6 +333,39 @@ def test_analyze_api_misuse_yields_docs_and_queries() -> None:
 
 def test_analyze_non_doc_categories_and_fault_attribution() -> None:
     node = make_analyze_error_node(None, make_settings())
+    # Collection error probe (a): import missing name from 'solution' in tests
+    COLLECTION_ERROR_MISSING_FROM_SOLUTION = {
+        "passed": True,
+        "category": "pass",
+        "exit_code": 2,
+        "timed_out": False,
+        "duration_s": 0.5,
+        "tests_total": 1,
+        "tests_failed": 0,
+        "failures": [],
+        "stdout": (
+            "test_solution.py:1: in <module>\n    from solution import nothere\n"
+            "E   ImportError: cannot import name 'nothere' from 'solution'"
+        ),
+        "stderr": "",
+    }
+    # Collection error probe (b): import missing name from library in solution.py
+    COLLECTION_ERROR_API_MISUSE = {
+        "passed": True,
+        "category": "pass",
+        "exit_code": 2,
+        "timed_out": False,
+        "duration_s": 0.5,
+        "tests_total": 1,
+        "tests_failed": 0,
+        "failures": [],
+        "stdout": (
+            "test_solution.py:1: in <module>\n    from solution import f\n"
+            "solution.py:1: in <module>\n    from collections import OrderedDictt\n"
+            "E   ImportError: cannot import name 'OrderedDictt' from 'collections'"
+        ),
+        "stderr": "",
+    }
     cases = [
         (
             {
@@ -361,8 +394,13 @@ def test_analyze_non_doc_categories_and_fault_attribution() -> None:
         (SYNTAX_ERROR_RUN_RESULT, "syntax_error", "code", False),
         (NO_TESTS_RUN_RESULT, "no_tests", "tests", False),
         (SANDBOX_ERROR_RUN_RESULT, "sandbox_error", "unknown", False),
-        (MISSING_DEFINITION_RUN_RESULT, "pass", "code", False),
+        # MISSING_DEFINITION_RUN_RESULT ~ COLLECTION_ERROR_MISSING_FROM_SOLUTION
+        # Per FIX 7a, collection errors map from exception type, never "pass"
+        (MISSING_DEFINITION_RUN_RESULT, "import_error", "code", False),
         (NAME_ERROR_IN_TEST_RUN_RESULT, "runtime_error", "unknown", False),
+        # FIX 7a: add two collection-error probe results
+        (COLLECTION_ERROR_MISSING_FROM_SOLUTION, "import_error", "code", False),
+        (COLLECTION_ERROR_API_MISUSE, "api_misuse", "code", True),
     ]
 
     for run_result, expected_category, expected_fault, expected_needs_docs in cases:
@@ -380,9 +418,13 @@ def test_analyze_non_doc_categories_and_fault_attribution() -> None:
         assert analysis["needs_docs"] == expected_needs_docs, (
             f"needs_docs mismatch for {expected_category}"
         )
-        assert analysis["retrieval_queries"] == [], (
-            f"Queries should be empty for {expected_category}"
-        )
+        # For api_misuse, retrieval_queries should be non-empty; for others, empty
+        if expected_category == "api_misuse":
+            assert analysis["retrieval_queries"], "Queries should be non-empty for api_misuse"
+        else:
+            assert analysis["retrieval_queries"] == [], (
+                f"Queries should be empty for {expected_category}"
+            )
 
 
 def test_analyze_handles_missing_or_passing_run_result() -> None:

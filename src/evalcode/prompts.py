@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from evalcode.analysis import extract_exception
 from evalcode.rag.types import RetrievedDoc
 from evalcode.state import AgentState
 
@@ -148,15 +149,14 @@ def build_analyze_messages(
         test_names = [f.get("test_name", "unknown") for f in failures[:5]]
         parts.append(f"Failing tests: {', '.join(test_names)}")
 
-        # Exception line from first failure
-        first = failures[0]
-        exc_type = first.get("error_type", "")
-        msg = first.get("message", "")
-        if exc_type or msg:
-            parts.append(f"Exception: {exc_type}: {msg}"[:300])
+    # Exception line from extract_exception (never uses failures[].error_type)
+    exc_type, exc_msg = extract_exception(run_result)
+    if exc_type or exc_msg:
+        parts.append(f"Exception: {exc_type}: {exc_msg}"[:300])
 
-        # Traceback tail
-        tb = first.get("traceback", "")
+    # Traceback tail (from first failure if available)
+    if failures:
+        tb = failures[0].get("traceback", "")
         if tb:
             tail = tb[-1500:]
             parts.append(f"Traceback (tail):\n{tail}")
@@ -245,12 +245,15 @@ def build_revise_messages(state: AgentState, *, context_max_chars: int = 6000) -
     if failures:
         test_names = [f.get("test_name", "unknown") for f in failures[:5]]
         parts.append(f"Failing tests: {', '.join(test_names)}")
-        first = failures[0]
-        exc_type = first.get("error_type", "")
-        msg = first.get("message", "")
-        if exc_type or msg:
-            parts.append(f"Exception: {exc_type}: {msg}"[:300])
-        tb = first.get("traceback", "")
+
+    # Exception line from extract_exception (never uses failures[].error_type)
+    exc_type, exc_msg = extract_exception(run_result)
+    if exc_type or exc_msg:
+        parts.append(f"Exception: {exc_type}: {exc_msg}"[:300])
+
+    # Traceback tail (from first failure if available)
+    if failures:
+        tb = failures[0].get("traceback", "")
         if tb:
             parts.append(f"Traceback (tail):\n{tb[-1500:]}")
     if stdout:
