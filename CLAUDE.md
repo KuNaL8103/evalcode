@@ -93,15 +93,16 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 4 fix-up (39e2543): per-call API retry limit, close-only reasoning strip, malformed-response retry; test count unchanged (46).
 - Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing, reply_head / parse_reason diagnostics; live: 404 (slug removed), no reply received, tokens 0, LLM_MAX_TOKENS 8192; 56 passed.
 - Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
+- Task 7: error analysis + revise nodes — `analysis.py`, `nodes/analyze_error.py`, `nodes/revise.py`, revise prompt in `prompts.py`; 10 new tests (88).
 
 ### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
 - RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.
 - Timeout evidence (A7): `elapsed <= 6.0` (actual 3.45s); pid_file 2 PIDs (e.g. 56216, 65984); both `pid_alive` false (Windows `tasklist`).
 - Provider: `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; live: PASS, first reply followed tagged format, tokens used.
 - Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; set `GEMINI_API_KEY` in `.env` (git-ignored).
-- Tests: 78 passed + 2 deselected; ruff clean.
+- Tests: 88 passed; ruff clean.
 - Sandbox writes `solution.py` and `test_solution.py` separately; generated tests import via `from solution import ...` (see prompts.py).
-- Not started: Task 7 onward.
+- Not started: Task 8 onward.
 
 ### Not started
-Task 7 onward.
+Task 8 onward.

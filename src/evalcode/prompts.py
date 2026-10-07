@@ -21,6 +21,9 @@ __all__ = [
     "format_context",
     "ANALYZE_SYSTEM",
     "build_analyze_messages",
+    "REVISE_SYSTEM",
+    "REVISE_INSTRUCTION",
+    "build_revise_messages",
 ]
 
 GENERATE_SYSTEM = """\
@@ -184,3 +187,113 @@ def build_analyze_messages(
         human_content = human_content[:failure_summary_chars] + "\n...[truncated]"
 
     return [SystemMessage(content=ANALYZE_SYSTEM), HumanMessage(content=human_content)]
+
+
+REVISE_SYSTEM = GENERATE_SYSTEM  # Reuse the same system prompt
+
+REVISE_INSTRUCTION = """\
+Return the COMPLETE corrected solution.py and test_solution.py in the exact
+tagged format. Use <explanation>, <code>, <tests>, and <docs_used> blocks.
+If PROVIDED TESTS were given, omit the <tests> block (they are fixed ground truth).
+"""
+
+
+def build_revise_messages(state: AgentState, *, context_max_chars: int = 6000) -> list[BaseMessage]:
+    """Build messages for the revise LLM call.
+
+    The user message contains:
+    - Task
+    - Current solution.py (uncapped)
+    - Current test_solution.py (uncapped, labeled as FIXED ground truth if provided_tests)
+    - Failure report (category, up to 5 failing test names, exception line <= 300 chars,
+      traceback tail <= 1500, stdout/stderr tails <= 500)
+    - Diagnosis (root_cause, fix_plan, fault, suspect_symbols)
+    - Human feedback if present (<= 1000 chars)
+    - Reference docs via format_context (only when docs exist)
+    - Previous failed attempts: up to 3 history events with node == "analyze_error"
+      and attempt < current attempt
+    - Instruction to return complete corrected code/tests in tagged format
+    """
+    run_result = state.get("run_result") or {}
+    error_analysis = state.get("error_analysis") or {}
+    code = state.get("code") or ""
+    tests = state.get("tests") or ""
+    provided = (state.get("provided_tests") or "").strip()
+    human_feedback = state.get("human_feedback") or ""
+    attempt = state.get("attempt", 0)
+    retrieved_docs = state.get("retrieved_docs") or []
+    history = state.get("history") or []
+
+    category = error_analysis.get("category") or run_result.get("category") or "unknown"
+    failures = run_result.get("failures") or []
+    stdout = run_result.get("stdout") or ""
+    stderr = run_result.get("stderr") or ""
+
+    parts: list[str] = [f"Task:\n{state.get('task', '')}"]
+
+    # Current solution.py (uncapped)
+    parts.append(f"Current solution.py:\n{code}")
+
+    # Current test_solution.py (labeled if provided_tests)
+    if provided:
+        parts.append("Current test_solution.py (FIXED ground truth — do not modify):\n" + provided)
+    else:
+        parts.append(f"Current test_solution.py:\n{tests}")
+
+    # Failure report
+    parts.append(f"Category: {category}")
+    if failures:
+        test_names = [f.get("test_name", "unknown") for f in failures[:5]]
+        parts.append(f"Failing tests: {', '.join(test_names)}")
+        first = failures[0]
+        exc_type = first.get("error_type", "")
+        msg = first.get("message", "")
+        if exc_type or msg:
+            parts.append(f"Exception: {exc_type}: {msg}"[:300])
+        tb = first.get("traceback", "")
+        if tb:
+            parts.append(f"Traceback (tail):\n{tb[-1500:]}")
+    if stdout:
+        parts.append(f"Stdout (tail):\n{stdout[-500:]}")
+    if stderr:
+        parts.append(f"Stderr (tail):\n{stderr[-500:]}")
+
+    # Diagnosis
+    root_cause = error_analysis.get("root_cause", "")
+    fix_plan = error_analysis.get("fix_plan", "")
+    fault = error_analysis.get("fault", "unknown")
+    suspects = error_analysis.get("suspect_symbols", [])
+
+    parts.append(
+        f"Diagnosis:\n  root_cause: {root_cause}\n  fix_plan: {fix_plan}\n  fault: {fault}"
+    )
+    if suspects:
+        parts.append(f"  suspect_symbols: {', '.join(suspects)}")
+
+    # Human feedback
+    if human_feedback.strip():
+        parts.append(f"Human feedback:\n{human_feedback.strip()[:1000]}")
+
+    # Reference docs
+    if retrieved_docs:
+        doc_context = format_context(retrieved_docs, context_max_chars)
+        if doc_context:
+            parts.append(f"Reference documentation:\n{doc_context}")
+
+    # Previous failed attempts (up to 3 analyze_error events with attempt < current)
+    prev_attempts = [
+        h for h in history if h.get("node") == "analyze_error" and h.get("attempt", 0) < attempt
+    ][-3:]
+    if prev_attempts:
+        lines = []
+        for h in prev_attempts:
+            a = h.get("attempt", 0)
+            cat = h.get("summary", {}).get("category", "unknown")
+            rc = h.get("summary", {}).get("root_cause", "")[:150]
+            lines.append(f"  attempt {a}: {cat} - {rc}")
+        parts.append("Previous failed attempts:\n" + "\n".join(lines))
+
+    # Instruction
+    parts.append(REVISE_INSTRUCTION)
+
+    return [SystemMessage(content=REVISE_SYSTEM), HumanMessage(content="\n\n".join(parts))]
