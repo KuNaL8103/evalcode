@@ -1,4 +1,4 @@
-"""Prompts for the generate node (tagged plain-text protocol, ARCHITECTURE §2).
+"""Prompts for the generate node and analyze_error node (tagged plain-text protocol).
 
 Kept compact on purpose: these run on small free-tier quotas. The system
 prompt pins the exact output shape; ``build_generate_messages`` assembles
@@ -14,7 +14,14 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from evalcode.rag.types import RetrievedDoc
 from evalcode.state import AgentState
 
-__all__ = ["FORMAT_REMINDER", "GENERATE_SYSTEM", "build_generate_messages", "format_context"]
+__all__ = [
+    "FORMAT_REMINDER",
+    "GENERATE_SYSTEM",
+    "build_generate_messages",
+    "format_context",
+    "ANALYZE_SYSTEM",
+    "build_analyze_messages",
+]
 
 GENERATE_SYSTEM = """\
 You are a Python code-generation agent. You write one module, solution.py,
@@ -96,3 +103,84 @@ def build_generate_messages(
             "output only <explanation> and <code>, and make the code pass them:\n" + provided
         )
     return [SystemMessage(content=GENERATE_SYSTEM), HumanMessage(content="\n\n".join(parts))]
+
+
+ANALYZE_SYSTEM = """\
+You are a Python error-analysis agent. Given a failed code execution, you
+produce a concise root cause and a concrete fix plan.
+
+REPLY WITH EXACTLY THESE TAGGED BLOCKS AND NOTHING ELSE:
+<root_cause>
+One sentence: the fundamental reason the code failed (exception type + key detail).
+</root_cause>
+<fix_plan>
+One sentence: the minimal change to fix the failure. If tests are provided
+ground truth, say so explicitly.
+</fix_plan>
+"""
+
+
+def build_analyze_messages(
+    state: AgentState, *, failure_summary_chars: int = 1500
+) -> list[BaseMessage]:
+    """Build messages for the analyze_error LLM call.
+
+    The human message contains a compact failure summary (category, exception
+    line, traceback tail, stdout/stderr tails) capped at ``failure_summary_chars``.
+    """
+    run_result = state.get("run_result") or {}
+    error_analysis = state.get("error_analysis") or {}
+    provided = (state.get("provided_tests") or "").strip()
+
+    category = error_analysis.get("category") or run_result.get("category") or "unknown"
+    failures = run_result.get("failures") or []
+    stdout = run_result.get("stdout") or ""
+    stderr = run_result.get("stderr") or ""
+
+    # Build compact failure summary
+    parts: list[str] = [f"Category: {category}"]
+
+    if failures:
+        # Up to 5 failing test names
+        test_names = [f.get("test_name", "unknown") for f in failures[:5]]
+        parts.append(f"Failing tests: {', '.join(test_names)}")
+
+        # Exception line from first failure
+        first = failures[0]
+        exc_type = first.get("error_type", "")
+        msg = first.get("message", "")
+        if exc_type or msg:
+            parts.append(f"Exception: {exc_type}: {msg}"[:300])
+
+        # Traceback tail
+        tb = first.get("traceback", "")
+        if tb:
+            tail = tb[-1500:]
+            parts.append(f"Traceback (tail):\n{tail}")
+
+    if stdout:
+        parts.append(f"Stdout (tail):\n{stdout[-500:]}")
+    if stderr:
+        parts.append(f"Stderr (tail):\n{stderr[-500:]}")
+
+    # Deterministic diagnosis from error_analysis
+    root_cause = error_analysis.get("root_cause", "")
+    fix_plan = error_analysis.get("fix_plan", "")
+    fault = error_analysis.get("fault", "unknown")
+    suspects = error_analysis.get("suspect_symbols", [])
+
+    parts.append(f"Deterministic diagnosis:\n  root_cause: {root_cause}")
+    parts.append(f"  fix_plan: {fix_plan}")
+    parts.append(f"  fault: {fault}")
+    if suspects:
+        parts.append(f"  suspect_symbols: {', '.join(suspects)}")
+
+    if provided:
+        parts.append("PROVIDED TESTS are fixed ground truth — do not modify them.")
+
+    human_content = "\n\n".join(parts)
+    # Cap total length
+    if len(human_content) > failure_summary_chars:
+        human_content = human_content[:failure_summary_chars] + "\n...[truncated]"
+
+    return [SystemMessage(content=ANALYZE_SYSTEM), HumanMessage(content=human_content)]
