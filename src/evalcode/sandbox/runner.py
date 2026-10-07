@@ -175,12 +175,11 @@ def run_in_sandbox(
         "stderr": "",
     }
     with tempfile.TemporaryDirectory() as tmpdir:
+        sol_path = Path(tmpdir) / "solution.py"
         test_path = Path(tmpdir) / "test_solution.py"
         try:
-            # Combine solution code and tests into a single file so tests can
-            # call functions/classes defined in the solution without imports.
-            combined = code + "\n\n" + tests + "\n"
-            test_path.write_text(combined, encoding="utf-8")
+            sol_path.write_text(code, encoding="utf-8")
+            test_path.write_text(tests + "\n", encoding="utf-8")
         except Exception as exc:
             result["failures"] = [
                 {

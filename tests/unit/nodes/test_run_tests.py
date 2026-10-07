@@ -10,7 +10,10 @@ from evalcode.sandbox.errors import C_SANDBOX_ERROR
 def test_run_tests_node_success():
     node = make_run_tests_node(get_settings())
     result = node(
-        {"code": "def add(a,b): return a+b", "tests": "def test_add(): assert add(1,2)==3"}
+        {
+            "code": "def add(a,b): return a+b",
+            "tests": "from solution import add\n\ndef test_add(): assert add(1,2)==3",
+        }
     )
     assert "run_result" in result
     assert isinstance(result["run_result"], dict)

@@ -83,7 +83,7 @@ def test_truncate_output():
 # ---------- real sandbox ----------
 
 PASSING_CODE = "def add(a,b): return a+b"
-PASSING_TESTS = "def test_add(): assert add(1,2)==3"
+PASSING_TESTS = "from solution import add\n\ndef test_add(): assert add(1,2)==3"
 
 
 def test_sandbox_passing():
@@ -98,14 +98,14 @@ def test_sandbox_passing():
 
 def test_sandbox_assertion_failure():
     code = PASSING_CODE
-    tests = "def test_bad(): assert add(1,2)==99"
+    tests = "from solution import add\n\ndef test_bad(): assert add(1,2)==99"
     result = run_in_sandbox(code, tests, timeout_s=15.0, mem_mb=256)
     assert result["category"] == C_ASSERTION_FAILURE or result["tests_failed"] > 0
 
 
 def test_sandbox_runtime_exception():
     code = "def bad(): raise RuntimeError('oops')"
-    tests = "def test_bad(): bad()"
+    tests = "from solution import bad\n\ndef test_bad(): bad()"
     result = run_in_sandbox(code, tests, timeout_s=15.0, mem_mb=256)
     assert (
         result["category"] in (C_RUNTIME_ERROR, C_ASSERTION_FAILURE) or result["tests_failed"] > 0
@@ -166,7 +166,9 @@ def loop():
     while True:
         pass
 """
-    tests = """def test_loop():
+    tests = """from solution import loop
+
+def test_loop():
     loop()
 """
     start = time.monotonic()
@@ -190,6 +192,7 @@ def test_sandbox_secret_env_not_visible(monkeypatch):
     monkeypatch.setenv("MY_SERVICE_API_KEY", "x" + "FAKE" * 8)
     code = "import os\ndef get_env(name): return os.environ.get(name, '')"
     tests = (
+        "from solution import get_env\n\n"
         "def test_env():\n"
         "    assert get_env('GEMINI_API_KEY') == '' or get_env('GEMINI_API_KEY') is None\n"
         "    assert get_env('MY_SERVICE_API_KEY') == '' or get_env('MY_SERVICE_API_KEY') is None\n"

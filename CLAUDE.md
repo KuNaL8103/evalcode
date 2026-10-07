@@ -100,6 +100,7 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Provider: `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; live: PASS, first reply followed tagged format, tokens used.
 - Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; set `GEMINI_API_KEY` in `.env` (git-ignored).
 - Tests: 78 passed + 2 deselected; ruff clean.
+- Sandbox writes `solution.py` and `test_solution.py` separately; generated tests import via `from solution import ...` (see prompts.py).
 - Not started: Task 7 onward.
 
 ### Not started

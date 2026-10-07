@@ -150,7 +150,6 @@ def test_get_chat_model_configuration() -> None:
     assert model.temperature == settings.llm_temperature
     assert model.max_tokens == settings.llm_max_tokens
     assert model.request_timeout == 55.5
-    assert model.default_headers == {"X-Title": "evalcode"}
     assert FAKE_KEY not in repr(model)  # SecretStr stays masked
 
     with pytest.raises(ConfigError):

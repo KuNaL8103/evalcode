@@ -88,7 +88,6 @@ def get_chat_model(settings: Settings) -> ChatOpenAI:
         max_tokens=settings.llm_max_tokens,
         timeout=settings.llm_timeout_s,
         max_retries=0,
-        default_headers={"X-Title": "evalcode"},
     )
 
 
