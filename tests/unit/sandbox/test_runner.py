@@ -14,7 +14,6 @@ from evalcode.sandbox.errors import (
     C_IMPORT_ERROR,
     C_NO_TESTS,
     C_RUNTIME_ERROR,
-    C_SANDBOX_ERROR,
     C_SYNTAX_ERROR,
     C_TIMEOUT,
     classify,
@@ -89,12 +88,7 @@ PASSING_TESTS = "def test_add(): assert add(1,2)==3"
 
 def test_sandbox_passing():
     result = run_in_sandbox(PASSING_CODE, PASSING_TESTS, timeout_s=15.0, mem_mb=256)
-    assert result["category"] == "pass" or result["category"] not in (
-        C_SANDBOX_ERROR,
-        C_SYNTAX_ERROR,
-        C_IMPORT_ERROR,
-        C_TIMEOUT,
-    )
+    assert result["category"] == "pass"
     assert result["tests_total"] >= 1
     import json
 
@@ -138,27 +132,27 @@ def test_sandbox_collection_error():
 
 
 def pid_alive(pid: int) -> bool:
-    try:
+    if sys.platform == "win32":
         import subprocess
 
-        if sys.platform == "win32":
-            out = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return str(pid) in out.stdout
-        else:
-            import os
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return str(pid) in out.stdout
+    else:
+        import os
 
-            try:
-                os.kill(pid, 0)
-                return True
-            except ProcessLookupError:
-                return False
-    except Exception:
-        return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # process exists but we can't signal it
+            return True
 
 
 def test_sandbox_infinite_loop_timeout(tmp_path):
@@ -186,7 +180,7 @@ def loop():
     assert len(lines) >= 2, f"expected 2 PIDs, got {lines!r}"
     p1 = int(lines[0].strip())
     p2 = int(lines[1].strip())
-    print("PIDs:", p1, p2)
+    print("pids:", p1, p2)
     assert not pid_alive(p1), f"PID {p1} still alive"
     assert not pid_alive(p2), f"PID {p2} still alive"
 
