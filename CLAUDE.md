@@ -1,12 +1,12 @@
 # CLAUDE.md — evalcode
 
 ## Project overview
-evalcode is an iterative **Code Generation Agent** built with **RAG + LangGraph**: it retrieves Python API docs (local MiniLM embeddings + Chroma), generates code and tests with an **OpenRouter free model**, runs them in a subprocess sandbox, analyzes failures, and revises in a bounded loop, with a human-approval interrupt, structured logging, optional LangSmith tracing, and a Typer CLI.
+evalcode is an iterative **Code Generation Agent** built with **RAG + LangGraph**: it retrieves Python API docs (local MiniLM embeddings + Chroma), generates code and tests with a **Gemini free-tier model**, runs them in a subprocess sandbox, analyzes failures, and revises in a bounded loop, with a human-approval interrupt, structured logging, optional LangSmith tracing, and a Typer CLI.
 
 - Repo: https://github.com/KuNaL8103/evalcode.git (branch `main`)
 - Design of record: `docs/ARCHITECTURE.md`. Task plan: `docs/PLAN.md`.
 - Python 3.11+. Package: `src/evalcode`.
-- **LLM constraint**: OpenRouter free models only, via `langchain_openai.ChatOpenAI(base_url="https://openrouter.ai/api/v1")`. Key only from env `OPENROUTER_API_KEY`; model from env `LLM_MODEL` (default `qwen/qwen3.8-27b:free`). No other providers, no hardcoded keys.
+- **LLM constraint**: Gemini only, via `langchain_openai.ChatOpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/")`. Key only from env `GEMINI_API_KEY`; model from env `LLM_MODEL` (default `gemini-3.5-flash-lite`; leave blank for the default). No other providers, no hardcoded keys. Never set `inkling` models as `LLM_MODEL`: they return 403 for plain API-key clients.
 - Dev environment: Windows, Python 3.13.3, venv at .venv (use `.venv/Scripts/python`). Bash-style commands in this file need Windows equivalents (e.g. `copy .env.example .env`, `.venv\Scripts\activate`). Guard POSIX-only APIs (`os.killpg`, `preexec_fn`, `resource`) behind `sys.platform` checks.
 
 ## Directory layout (target; `(Task N)` = task that creates it)
@@ -39,11 +39,11 @@ evalcode/
 python -m venv .venv && source .venv/bin/activate        # Windows: .venv\Scripts\activate
 # optional, saves GBs (Linux/Windows): pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[dev,corpus]"
-cp .env.example .env     # then set OPENROUTER_API_KEY in .env (never commit .env)
+cp .env.example .env     # then set GEMINI_API_KEY in .env (never commit .env)
 
 pytest -q                # unit tests (excludes `live` and `slow`)
 pytest -m slow -q        # real embedding model (downloads MiniLM weights once)
-pytest -m live -q        # real OpenRouter calls (needs OPENROUTER_API_KEY; uses free quota — run sparingly)
+pytest -m live -q        # real Gemini calls (needs GEMINI_API_KEY; uses free quota — run sparingly)
 ruff check . && ruff format --check .
 
 python -m evalcode.rag.ingest --help   # ingestion (CLI wrapper arrives in Task 12)
@@ -89,17 +89,17 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 3 pre-work (8f4a18d): `_public_methods` walks `dir(cls)`/MRO, so methods inherited from Python base classes are indexed (e.g. `pathlib.Path.with_suffix`), while members inherited from builtins bases (`BaseException.add_note`) stay skipped; json still yields exactly 12 chunks; test count unchanged (22).
 - Task 3 (f03e7ea): embeddings, Chroma store, retriever, ingest (`rag/embeddings,store,retriever,ingest` + `RetrievedDoc`); 10 new tests + 1 slow.
 - Task 3b (8a09984): retrieval-quality tuning — `_clean_signature`, `DocChunk.embed_text` (compact embedding input), probe script; test count unchanged (32).
-- Task 4 (4c54c9e): state schema & OpenRouter LLM client — `state.py`, `llm.py` (backoff, rate-limit, budget), LLM error hierarchy, `tests/fakes.py`; 14 new tests (46).
+- Task 4 (4c54c9e): state schema & LLM client (first built for OpenRouter, later switched to Gemini) — `state.py`, `llm.py` (backoff, rate-limit, budget), LLM error hierarchy, `tests/fakes.py`; 14 new tests (46).
 - Task 4 fix-up (39e2543): per-call API retry limit, close-only reasoning strip, malformed-response retry; test count unchanged (46).
 - Task 5 fix-up (ca12cdc): tolerant missing-closing-tag parsing, reply_head / parse_reason diagnostics; live: 404 (slug removed), no reply received, tokens 0, LLM_MAX_TOKENS 8192; 56 passed.
 - Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 
 ### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
 - RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.
-- Timeout evidence (A7): `elapsed <= 6.0`; pid_file 2 PIDs; both `pid_alive` false (Windows `tasklist`). Actual result on this Windows run: `runtime_error` (env), assertions present.
-- Provider: `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; live skipped (no `GEMINI_API_KEY`).
-- Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; `GEMINI_API_KEY=` blank.
-- Tests: 70 passed + 2 deselected (9 config/llm remain); ruff clean on changed files; no new tests added.
+- Timeout evidence (A7): `elapsed <= 6.0` (actual 3.45s); pid_file 2 PIDs (e.g. 56216, 65984); both `pid_alive` false (Windows `tasklist`).
+- Provider: `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; live: PASS, first reply followed tagged format, tokens used.
+- Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; set `GEMINI_API_KEY` in `.env` (git-ignored).
+- Tests: 78 passed + 2 deselected; ruff clean.
 - Not started: Task 7 onward.
 
 ### Not started

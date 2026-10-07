@@ -2,7 +2,7 @@
 
 Each task = one Claude Code session, ending with: tests written and passing, `ruff` clean, conventional commit, push to `origin main`, and CLAUDE.md "Current status" updated. Do tasks in order; don't skip.
 
-LLM: OpenRouter free models only (default `qwen/qwen3.8-27b:free`, swap via `LLM_MODEL`). Embeddings: local `sentence-transformers/all-MiniLM-L6-v2`. Vector store: Chroma. Free-tier quota is a design constraint: backoff, throttling, call budgets, and small prompts are built in.
+LLM: Gemini only (default `gemini-3.5-flash-lite` via the OpenAI-compatible endpoint, swap via `LLM_MODEL`). Embeddings: local `sentence-transformers/all-MiniLM-L6-v2`. Vector store: Chroma. Free-tier quota is a design constraint: backoff, throttling, call budgets, and small prompts are built in.
 
 ## Overview
 
@@ -14,7 +14,7 @@ LLM: OpenRouter free models only (default `qwen/qwen3.8-27b:free`, swap via `LLM
 | 3 | Embeddings, Chroma, retriever, ingest | `rag/embeddings,store,retriever,ingest` | 10 (32) | `feat(rag): add HuggingFace embeddings, Chroma vector store, and retriever` |
 | 4 | State schema & OpenRouter LLM client | `state.py`, `llm.py` (backoff, rate-limit, budget), `FakeChatModel` | 14 (46) | `feat(llm): add state schema and OpenRouter client with backoff and call budget` |
 | 5 | Prompts, parser, generate node | `prompts,parsing,schemas,nodes/generate`, `ScriptedLLM` | 10 (56) | `feat(agent): add prompts, response parser, and generate node` |
-| 6 | Sandbox & run_tests | `sandbox/*`, `nodes/run_tests` | 16 (78) | `feat(sandbox): ...` |
+| 6 | Sandbox & run_tests | `sandbox/*`, `nodes/run_tests` | 22 (78) | `feat(sandbox): add subprocess sandbox and run_tests node with structured error capture` |
 | 7 | Error analysis & revise | `nodes/analyze_error,revise` | 10 (88) | `feat(agent): add analyze_error and revise nodes` |
 | 8 | Graph wiring & retry edges | `graph.py`, `nodes/terminal` | 10 (98) | `feat(graph): wire LangGraph state machine with conditional retry edges` |
 | 9 | Human-in-the-loop | `nodes/human_review`, `persistence.py` | 8 (106) | `feat(hitl): add human_review interrupt with approve/reject/edit` |
@@ -42,7 +42,7 @@ Opt-in tests (deselected by default): 1 `slow` (Task 3), `live` tests in Tasks 5
 
 **Task 5 — Prompts, parser, generate node.** Goal: first LLM node. Deliver: tagged-text protocol, tolerant parser, `CodeBundle`, `format_context`, `make_generate_node` (graceful failure on `LLMError`/unparseable output), `ScriptedLLM`. Accept: 10 new tests + 1 live (≤2 calls). Think-tag literals must be built from parts (see CLAUDE.md 'Tag-literal safety').
 
-**Task 6 — Sandbox & run_tests.** Goal: safe execution with structured errors. Deliver: `run_in_sandbox`, error parsing/classification, `run_tests_node`. Accept: syntax/import/assertion/runtime/timeout/no-tests classified; env (including OpenRouter key) scrubbed; 16 new tests. Windows-aware: on Windows kill the process tree with taskkill /T and skip rlimits (see ARCHITECTURE §6).
+**Task 6 — Sandbox & run_tests.** Goal: safe execution with structured errors. Deliver: `run_in_sandbox`, error parsing/classification, `run_tests_node`. Accept: syntax/import/assertion/runtime/timeout/no-tests classified; env (including the Gemini key) scrubbed; 22 new tests. Windows-aware: on Windows kill the process tree with taskkill /T and skip rlimits (see ARCHITECTURE §6).
 
 **Task 7 — Error analysis & revise.** Goal: learn from failures. Deliver: deterministic classifier + symbol extraction (+ optional LLM diagnosis, off by default); `revise` node with failure-aware prompt and budget bookkeeping. Accept: API-misuse errors yield `needs_docs` + queries; counters correct; 10 new tests.
 
@@ -58,4 +58,4 @@ Opt-in tests (deselected by default): 1 `slow` (Task 3), `live` tests in Tasks 5
 
 **Task 13 — Eval harness & demo tasks.** Goal: measure whether RAG helps without blowing the free quota. Deliver: ≥10 YAML tasks with references, `evalcode eval` (resumable, stops cleanly on daily quota, `--limit`), comparison report. Accept: references pass; harness works offline with fakes; 6 new tests; live run in batches only with approval.
 
-**Task 14 — README, CI, polish.** Goal: shippable repo. Deliver: README (incl. OpenRouter setup and free-tier guidance), CI workflow, LICENSE, doc reconciliation, cleanup, fresh-clone verification. Accept: fresh clone → setup → `pytest -q` green.
+**Task 14 — README, CI, polish.** Goal: shippable repo. Deliver: README (incl. Gemini setup and free-tier guidance), CI workflow, LICENSE, doc reconciliation, cleanup, fresh-clone verification. Accept: fresh clone → setup → `pytest -q` green.

@@ -22,7 +22,7 @@ Design of record. If an implementation decision changes this design, update this
 |---|---|---|---|
 | Language | Python 3.11+ | Required by the LangGraph ecosystem; modern typing | — |
 | Orchestration | LangGraph `StateGraph` | Explicit state, conditional edges, checkpointing, native `interrupt` for human-in-the-loop | Hand-rolled loop (no persistence/interrupts) |
-| LLM provider | Gemini via `langchain_openai.ChatOpenAI(base_url=LLM_BASE_URL, api_key=GEMINI_API_KEY)`; default model `gemini-3.5-flash-lite`, set by `LLM_MODEL` | Zero cost, OpenAI-compatible API, one variable swaps between free models (e.g. `qwen/qwen3-coder:free`). Free slugs change often, so the model is never hardcoded outside config defaults | Paid providers (excluded by constraint) |
+| LLM provider | Gemini via `langchain_openai.ChatOpenAI(base_url=LLM_BASE_URL, api_key=GEMINI_API_KEY)`; default model `gemini-3.5-flash-lite`, set by `LLM_MODEL` | Zero cost, OpenAI-compatible API, one variable swaps between free models. Free slugs change often, so the model is never hardcoded outside config defaults | Paid providers (excluded by constraint) |
 | LLM output protocol | Tagged plain text: `<explanation>`, `<code>`, `<tests>`, optional `<docs_used>`; parsed locally | Free models/providers differ in tool-calling and JSON-mode support; plain text works everywhere. Reasoning models' `<think>…</think>` blocks are stripped before parsing | `with_structured_output`/tool calling (unreliable on free endpoints) |
 | LLM reliability layer | `LLMClient` wrapping the chat model (see §5) | Free tiers have low per-minute and daily limits; the agent loops, so backoff, throttling, and a per-run call budget are mandatory | Relying on the SDK's built-in retries (too blunt, no budget) |
 | Embeddings | `sentence-transformers/all-MiniLM-L6-v2` via `langchain_huggingface.HuggingFaceEmbeddings` (local, CPU, normalized, 384-d) | No key, no quota, small download. **Max sequence ≈256 word-pieces**, so chunks are capped around 1000 chars with the signature first | `bge-small`, `e5` (need query prefixes) — swappable through the `Embedder` protocol and `EMBEDDING_MODEL` |
@@ -174,7 +174,7 @@ Node factories take their dependencies (`make_generate_node(llm)`, `make_retriev
 
 ## 5. LLM access layer (`llm.py`)
 
-`get_chat_model(settings)` builds `ChatOpenAI(model=LLM_MODEL, base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY, temperature, max_tokens, timeout, max_retries=0)` — SDK retries are disabled because `LLMClient` owns retry policy. `settings.require_api_key()` raises `ConfigError` with setup instructions if the key is missing.
+`get_chat_model(settings)` builds `ChatOpenAI(model=LLM_MODEL, base_url=LLM_BASE_URL, api_key=GEMINI_API_KEY, temperature, max_tokens, timeout, max_retries=0)` — SDK retries are disabled because `LLMClient` owns retry policy. `settings.require_api_key()` raises `ConfigError` with setup instructions if the key is missing.
 
 `LLMClient.invoke_text(messages, purpose=...) -> LLMResponse(text, usage, model, waited_s)`:
 - **Throttle**: ensure at least `LLM_MIN_INTERVAL_S` between calls (free tiers limit requests per minute).
@@ -193,7 +193,7 @@ All errors derive from `LLMError`. Nodes talk only to `TextLLM`; nothing else im
 `run_in_sandbox(code, tests, timeout_s, mem_mb) -> RunResult`:
 1. Pre-flight (no process): `ast.parse` (→ `syntax_error`); `importlib.util.find_spec` on top-level imports (→ `import_error`).
 2. Write `solution.py` and `test_solution.py` into a fresh temp dir.
-3. Run `[sys.executable, "-E", "-s", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=report.xml", "test_solution.py"]` with `cwd=tmpdir`, `start_new_session=True` on POSIX (on Windows instead `creationflags=subprocess.CREATE_NEW_PROCESS_GROUP`), scrubbed environment (no `OPENROUTER_*`, `*_API_KEY`, `*_TOKEN`, `HF_*`, `LANGSMITH_*`; `HOME=tmpdir`), and on POSIX `resource.setrlimit` for CPU time, address space, file size.
+3. Run `[sys.executable, "-E", "-s", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=report.xml", "test_solution.py"]` with `cwd=tmpdir`, `start_new_session=True` on POSIX (on Windows instead `creationflags=subprocess.CREATE_NEW_PROCESS_GROUP`), scrubbed environment (no `GEMINI_*`, `GOOGLE_*`, `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `HF_*`, `LANGSMITH_*`, `LANGCHAIN_*`, `OPENAI_*`, `ANTHROPIC_*`; `HOME=tmpdir`), and on POSIX `resource.setrlimit` for CPU time, address space, file size.
 4. Wall-clock timeout → kill the process group (POSIX `os.killpg`; on Windows `taskkill /F /T /PID <pid>`) → `timeout`.
 5. Parse junit XML and traceback tails into structured `RunFailure`s; truncate stdout/stderr; classify (`ImportError`/`ModuleNotFoundError` → `import_error`; `AssertionError` → `assertion_failure`; collection errors map by exception type).
 6. Always clean up the temp dir.
@@ -218,7 +218,7 @@ All errors derive from `LLMError`. Nodes talk only to `TextLLM`; nothing else im
 
 ## 10. Configuration (env or `.env`; real env vars win over `.env`; blank = unset)
 
-`OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_S`, `LLM_MAX_API_RETRIES`, `LLM_BACKOFF_BASE_S`, `LLM_BACKOFF_MAX_S`, `LLM_MAX_WAIT_S`, `LLM_MIN_INTERVAL_S`, `MAX_LLM_CALLS_PER_RUN`, `EMBEDDING_MODEL`, `CHROMA_DIR`, `COLLECTION_NAME`, `DOC_LIBRARIES`, `DOCS_DIR`, `CHECKPOINT_DB`, `LOG_DIR`, `MAX_RETRIES`, `MAX_HUMAN_ROUNDS`, `SANDBOX_TIMEOUT_S`, `SANDBOX_MEM_MB`, `RETRIEVAL_TOP_K`, `RETRIEVAL_MAX_DOCS`, `RETRIEVAL_MIN_SCORE`, `CONTEXT_MAX_CHARS`, `ANALYZE_WITH_LLM`, `QUERY_REWRITE_WITH_LLM`, `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`.
+`GEMINI_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_S`, `LLM_MAX_API_RETRIES`, `LLM_BACKOFF_BASE_S`, `LLM_BACKOFF_MAX_S`, `LLM_MAX_WAIT_S`, `LLM_MIN_INTERVAL_S`, `MAX_LLM_CALLS_PER_RUN`, `EMBEDDING_MODEL`, `CHROMA_DIR`, `COLLECTION_NAME`, `DOC_LIBRARIES`, `DOCS_DIR`, `CHECKPOINT_DB`, `LOG_DIR`, `MAX_RETRIES`, `MAX_HUMAN_ROUNDS`, `SANDBOX_TIMEOUT_S`, `SANDBOX_MEM_MB`, `RETRIEVAL_TOP_K`, `RETRIEVAL_MAX_DOCS`, `RETRIEVAL_MIN_SCORE`, `CONTEXT_MAX_CHARS`, `ANALYZE_WITH_LLM`, `QUERY_REWRITE_WITH_LLM`, `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`.
 
 ## 11. Risks and mitigations
 
