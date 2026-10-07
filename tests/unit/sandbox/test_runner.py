@@ -100,16 +100,16 @@ def test_sandbox_assertion_failure():
     code = PASSING_CODE
     tests = "from solution import add\n\ndef test_bad(): assert add(1,2)==99"
     result = run_in_sandbox(code, tests, timeout_s=15.0, mem_mb=256)
-    assert result["category"] == C_ASSERTION_FAILURE or result["tests_failed"] > 0
+    assert result["category"] == C_ASSERTION_FAILURE, f"category={result['category']}"
+    assert result["tests_failed"] >= 1, f"tests_failed={result['tests_failed']}"
 
 
 def test_sandbox_runtime_exception():
     code = "def bad(): raise RuntimeError('oops')"
     tests = "from solution import bad\n\ndef test_bad(): bad()"
     result = run_in_sandbox(code, tests, timeout_s=15.0, mem_mb=256)
-    assert (
-        result["category"] in (C_RUNTIME_ERROR, C_ASSERTION_FAILURE) or result["tests_failed"] > 0
-    )
+    assert result["category"] == C_RUNTIME_ERROR, f"category={result['category']}"
+    assert result["tests_failed"] >= 1, f"tests_failed={result['tests_failed']}"
 
 
 def test_sandbox_syntax_error_preflight():
@@ -220,7 +220,8 @@ def test_sandbox_stdout_truncated():
 def test_sandbox_no_tests_collected():
     # Empty tests file.
     result = run_in_sandbox(PASSING_CODE, "", timeout_s=10.0, mem_mb=256)
-    assert result["category"] == C_NO_TESTS or result["tests_total"] == 0
+    assert result["category"] == C_NO_TESTS, f"category={result['category']}"
+    assert result["tests_total"] == 0, f"tests_total={result['tests_total']}"
 
 
 @pytest.mark.skipif(sys.platform == "linux", reason="run on linux only")
