@@ -165,6 +165,8 @@ Node factories take their dependencies (`make_generate_node(llm, settings)`, `ma
 
 Task 7 decisions: a revision is human-driven iff `human_feedback` is non-empty, so `human_review` must always set non-empty feedback on reject; `analyze_error` derives the exception from traceback text, not `RunFailure.error_type`; `ErrorAnalysis.category` is the run category (the sandbox reports a collection error, pytest exit code 2, as `passed` false with a category mapped from the exception type; `analyze_error` also maps defensively if it ever sees category `pass` with `passed` false) or `api_misuse`; `needs_docs` implies non-empty `retrieval_queries`; `revise` summarizes up to 3 earlier `analyze_error` history events.
 
+Task 8 decisions: until Task 9 adds `human_review`, a passing run goes straight to `finalize`, so `auto_approve` has no effect yet; until Task 10 adds `retrieve`, `START -> generate` and `analyze_error -> revise` are direct edges, and `route_after_analysis`, `route_after_retrieve` and `route_after_review` do not exist yet. Routing uses `run_result['passed']` only. Nodes return only their new history events (the `history` reducer is `operator.add`). Real LLMClient construction lives only in `graph.default_dependencies`.
+
 ## 4. RAG layer
 
 - **Ingestion**: (a) *introspection loader*: for each configured library walk the public namespace (`__all__` or non-underscore names) and emit one chunk per function/class/method: `import_path + signature + docstring (truncated)`; class chunks include a method index. (b) *text loader*: .md/.rst/.txt split by headings then paragraphs.

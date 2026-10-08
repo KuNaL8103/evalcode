@@ -108,5 +108,9 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Sandbox invariant (Task 7c): `run_result['passed']` is True iff category is `pass` and exit_code is 0; collection errors (pytest exit 2) come back passed=False with a mapped category. Task 8 routes on `run_result['passed']`.
 - Not started: Task 8 onward.
 
+### Latest milestone (Task 8 — graph wiring — bba1ee4)
+- Task 8: graph wiring - `graph.py` (`Dependencies`, `build_graph`, routers, `run_task`/`stream_task`), `nodes/terminal.py`; run_tests history fix; 10 new tests + 1 live (98).
+- Tests: 98 passed; ruff clean.
+
 ### Not started
-Task 8 onward.
+Task 9 onward.
