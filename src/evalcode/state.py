@@ -11,7 +11,6 @@ import operator
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, TypedDict
 
-from evalcode.config import Settings
 from evalcode.rag.types import RetrievedDoc
 
 __all__ = [
@@ -19,7 +18,6 @@ __all__ = [
     "ErrorAnalysis",
     "RunFailure",
     "RunResult",
-    "initial_state",
     "StepEvent",
     "TokenUsage",
     "merge_usage",
@@ -142,41 +140,3 @@ def merge_usage(a: TokenUsage | None, b: TokenUsage | None) -> TokenUsage:
 def utc_now_iso() -> str:
     """Current UTC time as an ISO-8601 string (for ``StepEvent.ts``)."""
     return datetime.now(UTC).isoformat()
-
-
-def initial_state(
-    task: str,
-    settings: Settings,
-    *,
-    task_id: str | None = None,
-    provided_tests: str | None = None,
-    auto_approve: bool = False,
-) -> AgentState:
-    """Build the initial AgentState for a new run."""
-    import uuid
-
-    return {
-        "task_id": task_id or uuid.uuid4().hex,
-        "task": task,
-        "provided_tests": provided_tests,
-        "auto_approve": auto_approve,
-        "attempt": 0,
-        "retries_used": 0,
-        "max_retries": settings.max_retries,
-        "max_human_rounds": settings.max_human_rounds,
-        "human_rounds": 0,
-        "retrieval_queries": [],
-        "retrieved_docs": [],
-        "code": "",
-        "tests": "",
-        "explanation": "",
-        "run_result": None,
-        "error_analysis": None,
-        "human_decision": None,
-        "human_feedback": None,
-        "status": "running",
-        "final_code": None,
-        "failure_reason": None,
-        "history": [],
-        "token_usage": {},
-    }
