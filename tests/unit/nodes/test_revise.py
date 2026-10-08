@@ -189,6 +189,27 @@ def test_revise_respects_provided_tests_and_missing_tests() -> None:
     assert update2["history"][0]["summary"]["reasks"] == 0
     assert len(llm2.calls) == 1  # exactly one LLM call, no re-ask
 
+    # Case 3: provided_tests set, model returns code but NO <tests> tag ->
+    # result uses provided_tests verbatim, no re-ask
+    llm3 = ScriptedLLM([bundle_text(CODE_V2, tests=None, explanation="no tests tag with provided")])
+    node3 = make_revise_node(llm3, make_settings())
+
+    state3 = {
+        "task": "t",
+        "code": CODE_V1,
+        "tests": TESTS_V1,
+        "run_result": RUN_RESULT,
+        "error_analysis": ERROR_ANALYSIS,
+        "attempt": 1,
+        "retries_used": 0,
+        "provided_tests": PROVIDED_TESTS,
+    }
+    update3 = node3(state3)
+    assert update3["status"] == "running"
+    assert update3["tests"] == PROVIDED_TESTS  # verbatim from provided_tests
+    assert update3["history"][0]["summary"]["reasks"] == 0
+    assert len(llm3.calls) == 1  # exactly one LLM call, no re-ask
+
 
 def test_revise_failure_paths() -> None:
     """Failure paths: LLMError, double parse failure, recoverable parse failure."""
@@ -261,7 +282,7 @@ def test_revise_prompt_contents_and_bounds() -> None:
     from evalcode.nodes.analyze_error import make_analyze_error_node
     from evalcode.prompts import build_revise_messages
 
-    long_traceback = "x" * 3000
+    long_traceback = "\n".join(f"line {i}" for i in range(1, 400)) + "\n\n"
     long_stdout = "y" * 1000
     long_stderr = "z" * 1000
 
@@ -346,9 +367,30 @@ def test_revise_prompt_contents_and_bounds() -> None:
         assert "category" in h["summary"]
         assert "root_cause" in h["summary"]
 
-    # Traceback excerpt <= 1500 chars (text after "Traceback (tail):\n" up to next section)
-    traceback_section = human_content.split("Traceback (tail):\n")[1].split("\n\n")[0]
+    # Traceback excerpt <= 1500 chars (text after "Traceback (tail):\n" up to next section header)
+    traceback_start = human_content.index("Traceback (tail):\n") + len("Traceback (tail):\n")
+    # Find the next section header
+    section_headers = [
+        "\n\nStdout (tail):",
+        "\n\nStderr (tail):",
+        "\n\nDiagnosis:",
+        "\n\nHuman feedback:",
+        "\n\nReference documentation:",
+        "\n\nPrevious failed attempts:",
+        "\n\nReturn the COMPLETE",
+    ]
+    next_header_pos = len(human_content)
+    for header in section_headers:
+        pos = human_content.find(header, traceback_start)
+        if pos != -1 and pos < next_header_pos:
+            next_header_pos = pos
+    traceback_section = human_content[traceback_start:next_header_pos]
+    # Strip only trailing whitespace (in case header separator forces it)
+    traceback_section = traceback_section.rstrip()
+    print(f"traceback_section length: {len(traceback_section)}")
+    print(f"long_traceback[-1500:] length: {len(long_traceback[-1500:])}")
     assert len(traceback_section) <= 1500
+    assert traceback_section == long_traceback[-1500:].rstrip()
 
     # Total prompt < 10000 chars
     assert len(human_content) < 10000

@@ -292,26 +292,16 @@ def _determine_category(
     passed = run_result.get("passed")
     base_category = run_result.get("category") or "unknown"
 
-    # If truly passed with no exception text, return "pass"
+    # Rule 2: If truly passed with no exception text, return "pass"
+    # Nothing else may return "pass"
     if passed and not exception_text.strip():
         return "pass"
 
-    # Collection error: sandbox reports category "pass" with exit_code 2,
-    # empty failures, but exception text in stdout/stderr.
-    # Map from the extracted exception type. Trigger on the sandbox's
-    # collection-error signature: category="pass", exit_code=2, empty failures.
-    is_collection_error = (
-        base_category == "pass"
-        and exception_text.strip()
-        and run_result.get("exit_code") == 2
-        and not (run_result.get("failures") or [])
-    )
-    if is_collection_error:
-        # Map from exception type - never return "pass" for collection errors
+    # Rule 3: DEFENSIVE rule - if base_category == "pass" while passed is False,
+    # map from the extracted exception type. Never return "pass" here.
+    if base_category == "pass" and not passed:
         if exception_type == "SyntaxError":
             return "syntax_error"
-        if exception_type == "AssertionError":
-            return "assertion_failure"
         if exception_type in ("ImportError", "ModuleNotFoundError"):
             # For ImportError, check if it's api_misuse (from non-solution module)
             lower_text = exception_text.lower()
@@ -323,22 +313,19 @@ def _determine_category(
                         return "api_misuse"
             # "No module named" or from 'solution' -> import_error
             return "import_error"
+        if exception_type == "AssertionError":
+            return "assertion_failure"
         # Anything else -> runtime_error (will be checked for api_misuse below)
         base_category = "runtime_error"
 
-    # Derive category from exception text when available
+    # Rule 4: api_misuse overrides base ONLY when:
+    # - AttributeError "module 'M' has no attribute 'A'" with M != "solution"
+    # - ImportError "cannot import name 'N' from 'M'" with M != "solution"
+    # - TypeError whose message has a call-signature pattern
+    # A name imported "from 'solution'" is a missing definition: NOT api_misuse,
+    # category stays the (mapped) base
     if exception_text:
         lower_text = exception_text.lower()
-
-        # "No module named X" -> import_error (missing module, not API misuse)
-        if "no module named" in lower_text:
-            return "import_error"
-
-        # api_misuse overrides base ONLY when ALL conditions met:
-        # - AttributeError matching "module 'M' has no attribute 'A'" with M != "solution"
-        # - ImportError matching "cannot import name 'N' from 'M'" with M != "solution"
-        # - TypeError with call-signature patterns
-        # Missing definition from 'solution' (module name "solution") is NOT api_misuse
 
         # AttributeError on module -> api_misuse (unless module is "solution")
         if exception_type == "AttributeError":
@@ -352,20 +339,18 @@ def _determine_category(
         # ImportError "cannot import name N from M" -> api_misuse (unless M is "solution")
         if exception_type == "ImportError":
             if "cannot import name" in lower_text and "from 'solution'" in lower_text:
-                return run_result.get("category") or "import_error"
-            if "cannot import name" in lower_text:
+                # Missing definition from 'solution' is NOT api_misuse
+                pass  # fall through to base_category
+            elif "cannot import name" in lower_text:
                 m = _IMPORT_NAME_ERROR_RE.search(exception_text)
                 if m:
                     from_module = m.group(2)
                     if from_module != "solution":
                         return "api_misuse"
                 # If from 'solution' or no match, fall through
-            # Other ImportError -> import_error
-            return "import_error"
+            # Other ImportError falls through to base_category (which should be import_error)
 
-        # ModuleNotFoundError -> import_error (handled by "no module named" above)
-        if exception_type == "ModuleNotFoundError":
-            return "import_error"
+        # ModuleNotFoundError -> falls through to base_category (should be import_error)
 
         # TypeError with call-signature patterns -> api_misuse
         if exception_type == "TypeError":
@@ -380,11 +365,11 @@ def _determine_category(
             if any(p in lower_text for p in signature_patterns):
                 return "api_misuse"
 
-        # AssertionError -> assertion_failure
+        # AssertionError -> assertion_failure (overrides base)
         if exception_type == "AssertionError":
             return "assertion_failure"
 
-        # SyntaxError -> syntax_error
+        # SyntaxError -> syntax_error (overrides base)
         if exception_type == "SyntaxError":
             return "syntax_error"
 
@@ -392,8 +377,7 @@ def _determine_category(
         if exception_type == "TimeoutExpired":
             return "timeout"
 
-    # Return the (possibly mapped) base category
-    # Valid categories: 8 sandbox literals + "api_misuse" + "unknown"
+    # Rule 5: Return the (mapped) base, constrained to the 8 literals + "api_misuse" + "unknown"
     valid_categories = {
         "pass",
         "syntax_error",

@@ -69,6 +69,7 @@ def classify(
     stderr_text: str,
     tests_total: int,
     tests_failed: int,
+    exit_code: int = 0,
 ) -> str:
     combined = (stdout_text or "") + (stderr_text or "") + (traceback_text or "")
     lower = combined.lower()
@@ -88,7 +89,54 @@ def classify(
         return C_RUNTIME_ERROR
     if "runtime" in lower or "exception" in lower or "error" in lower:
         return C_RUNTIME_ERROR
+    # Collection error (pytest exit code 2) with no junit results:
+    # classify from the LAST "E   <Type>:" or "<Type>:" line in stdout/stderr
+    if exit_code == 2 and tests_total == 0:
+        exc_type = _extract_last_exception_type(combined)
+        if exc_type == "SyntaxError":
+            return C_SYNTAX_ERROR
+        if exc_type in ("ImportError", "ModuleNotFoundError"):
+            return C_IMPORT_ERROR
+        if exc_type == "AssertionError":
+            return C_ASSERTION_FAILURE
+        return C_RUNTIME_ERROR
     return C_SANDBOX_ERROR
+
+
+def _extract_last_exception_type(text: str) -> str:
+    """Extract the last exception type from pytest output.
+
+    Looks for lines like:
+    - "E   ImportError: ..."
+    - "E   SyntaxError: ..."
+    - "ImportError: ..."
+    - "test_solution.py:5: AssertionError"
+    Returns the exception type name, or "Exception" if not found.
+    """
+    import re
+
+    # Pattern 1: "E   ExceptionType: message" (pytest short format)
+    e_pat = r"^E\s+([A-Za-z_][A-Za-z0-9_\.]*?(?:Error|Exception))\s*:"
+    e_lines = re.findall(e_pat, text, re.MULTILINE)
+    if e_lines:
+        return e_lines[-1]
+
+    # Pattern 2: "file.py:NNN: ExceptionType[: message]"
+    file_pat = (
+        r"(?:test_solution|solution)\.py:\d+:\s*"
+        r"([A-Za-z_][A-Za-z0-9_\.]*?(?:Error|Exception))"
+    )
+    file_lines = re.findall(file_pat, text)
+    if file_lines:
+        return file_lines[-1]
+
+    # Pattern 3: bare "ExceptionType: message" lines (non-file)
+    bare_pat = r"^([A-Za-z_][A-Za-z0-9_\.]*?(?:Error|Exception))\s*:"
+    bare_lines = re.findall(bare_pat, text, re.MULTILINE)
+    if bare_lines:
+        return bare_lines[-1]
+
+    return "Exception"
 
 
 def truncate_output(text: str, max_bytes: int = 8000) -> str:

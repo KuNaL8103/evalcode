@@ -53,16 +53,13 @@ def make_revise_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState],
         retries_used = state.get("retries_used", 0) + (0 if human_driven else 1)
 
         provided_tests = state.get("provided_tests") or ""
-        # When provided_tests is set, tests are fixed ground truth -> require them.
-        # When provided_tests is empty, missing <tests> in reply is OK -> keep state["tests"].
-        require_tests = bool(provided_tests.strip())
 
         messages = build_revise_messages(state, context_max_chars=settings.context_max_chars)
         usage: TokenUsage = {}
         reasks = 0
         bundle = None
 
-        # First LLM call
+        # First LLM call - never require tests from the model (FIX C)
         try:
             response = llm.invoke_text(messages, purpose="revise")
         except LLMError as exc:
@@ -70,9 +67,9 @@ def make_revise_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState],
 
         usage = merge_usage(usage, response.usage)
         try:
-            bundle = parse_bundle(response.text, require_tests=require_tests)
+            bundle = parse_bundle(response.text, require_tests=False)
         except ParseError:
-            # Exactly one strict re-ask (only when require_tests=True)
+            # Exactly one strict re-ask (only for missing/empty <code>)
             reasks = 1
             _reply_head(response.text)
             reask = [
@@ -86,7 +83,7 @@ def make_revise_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState],
                 return _failed(exc2, attempt, usage, reasks, human_driven)
             usage = merge_usage(usage, second.usage)
             try:
-                bundle = parse_bundle(second.text, require_tests=require_tests)
+                bundle = parse_bundle(second.text, require_tests=False)
             except ParseError as exc2:
                 return _double_parse_failure(
                     attempt, usage, reasks, human_driven, second.text, str(exc2)

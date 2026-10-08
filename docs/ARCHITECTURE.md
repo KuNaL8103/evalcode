@@ -163,7 +163,7 @@ Node factories take their dependencies (`make_generate_node(llm, settings)`, `ma
 
 `revise` always increments `attempt`; it increments `retries_used` only for automatic (test-failure-driven) revisions. Each revise prompt includes summaries of the last 3 failed attempts. `fault` attribution (code vs tests) guards against loops caused by wrong LLM-written tests; `revise` may fix tests unless `provided_tests` is set.
 
-Task 7 decisions: a revision is human-driven iff `human_feedback` is non-empty, so `human_review` must always set non-empty feedback on reject; `analyze_error` derives the exception from traceback text, not `RunFailure.error_type`; `ErrorAnalysis.category` is the run category (a collection error, which the sandbox reports as category `pass` with `passed` false, is mapped from the exception type) or `api_misuse`; `needs_docs` implies non-empty `retrieval_queries`; `revise` summarizes up to 3 earlier `analyze_error` history events.
+Task 7 decisions: a revision is human-driven iff `human_feedback` is non-empty, so `human_review` must always set non-empty feedback on reject; `analyze_error` derives the exception from traceback text, not `RunFailure.error_type`; `ErrorAnalysis.category` is the run category (the sandbox reports a collection error, pytest exit code 2, as `passed` false with a category mapped from the exception type; `analyze_error` also maps defensively if it ever sees category `pass` with `passed` false) or `api_misuse`; `needs_docs` implies non-empty `retrieval_queries`; `revise` summarizes up to 3 earlier `analyze_error` history events.
 
 ## 4. RAG layer
 

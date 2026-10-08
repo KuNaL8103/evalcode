@@ -197,8 +197,8 @@ SANDBOX_ERROR_RUN_RESULT = {
 }
 
 MISSING_DEFINITION_RUN_RESULT = {
-    "passed": True,
-    "category": "pass",
+    "passed": False,
+    "category": "import_error",
     "exit_code": 2,
     "timed_out": False,
     "duration_s": 2.3,
@@ -335,8 +335,8 @@ def test_analyze_non_doc_categories_and_fault_attribution() -> None:
     node = make_analyze_error_node(None, make_settings())
     # Collection error probe (a): import missing name from 'solution' in tests
     COLLECTION_ERROR_MISSING_FROM_SOLUTION = {
-        "passed": True,
-        "category": "pass",
+        "passed": False,
+        "category": "import_error",
         "exit_code": 2,
         "timed_out": False,
         "duration_s": 0.5,
@@ -351,8 +351,8 @@ def test_analyze_non_doc_categories_and_fault_attribution() -> None:
     }
     # Collection error probe (b): import missing name from library in solution.py
     COLLECTION_ERROR_API_MISUSE = {
-        "passed": True,
-        "category": "pass",
+        "passed": False,
+        "category": "import_error",
         "exit_code": 2,
         "timed_out": False,
         "duration_s": 0.5,
@@ -401,6 +401,24 @@ def test_analyze_non_doc_categories_and_fault_attribution() -> None:
         # FIX 7a: add two collection-error probe results
         (COLLECTION_ERROR_MISSING_FROM_SOLUTION, "import_error", "code", False),
         (COLLECTION_ERROR_API_MISUSE, "api_misuse", "code", True),
+        # FIX 7c: defensive fixture - category="pass" with passed=False should map from exception
+        (
+            {
+                "passed": False,
+                "category": "pass",
+                "exit_code": 2,
+                "timed_out": False,
+                "duration_s": 0.5,
+                "tests_total": 1,
+                "tests_failed": 0,
+                "failures": [],
+                "stdout": "E   SyntaxError: invalid syntax",
+                "stderr": "",
+            },
+            "syntax_error",
+            "code",
+            False,
+        ),
     ]
 
     for run_result, expected_category, expected_fault, expected_needs_docs in cases:
@@ -424,6 +442,11 @@ def test_analyze_non_doc_categories_and_fault_attribution() -> None:
         else:
             assert analysis["retrieval_queries"] == [], (
                 f"Queries should be empty for {expected_category}"
+            )
+        # FIX 7c: collection fixtures (exit_code=2, empty failures) must never yield "pass"
+        if run_result.get("exit_code") == 2 and not (run_result.get("failures") or []):
+            assert analysis["category"] != "pass", (
+                f"Collection error must not yield category 'pass', got {analysis['category']}"
             )
 
 

@@ -304,7 +304,16 @@ def run_in_sandbox(
             result["tests_total"] = total
             result["tests_failed"] = failed
             result["failures"] = failures if failures else []
-            if total == 0:
+            exit_code = proc.returncode if proc and proc.returncode is not None else 0
+            result["exit_code"] = exit_code
+            # Collection error (pytest exit code 2): classify from stdout/stderr, passed=False
+            if exit_code == 2:
+                result["category"] = classify(
+                    "", result["stdout"], result["stderr"], total, failed, exit_code
+                )
+                result["passed"] = False
+                result["failures"] = []  # collection errors have no junit failures
+            elif total == 0:
                 result["category"] = C_NO_TESTS
                 result["failures"] = [
                     {
@@ -318,24 +327,57 @@ def run_in_sandbox(
             elif failed > 0:
                 tb_text = "".join(f.get("traceback", "") for f in result["failures"])
                 result["category"] = classify(
-                    tb_text, result["stdout"], result["stderr"], total, failed
+                    tb_text, result["stdout"], result["stderr"], total, failed, exit_code
                 )
                 result["passed"] = False
             else:
                 result["category"] = PASS
                 result["passed"] = True
-                result["exit_code"] = proc.returncode if proc and proc.returncode is not None else 0
         else:
             total = 0
             result["tests_total"] = total
             result["tests_failed"] = 0
-            result["category"] = classify("", result["stdout"], result["stderr"], total, 0)
+            exit_code = proc.returncode if proc and proc.returncode is not None else 0
+            result["exit_code"] = exit_code
+            result["category"] = classify(
+                "", result["stdout"], result["stderr"], total, 0, exit_code
+            )
+            # Collection error (exit_code 2, no junit): passed=False, failures stays []
+            if exit_code == 2:
+                result["passed"] = False
             if (
                 result["category"] == C_SANDBOX_ERROR
                 and proc is not None
-                and proc.returncode not in (0, 1)
+                and proc.returncode not in (0, 1, 2)
             ):
                 pass
+        # Any nonzero exit_code that would otherwise end as "pass" -> sandbox_error
+        if result["category"] == PASS and result.get("exit_code", 0) != 0:
+            result["category"] = C_SANDBOX_ERROR
+            result["passed"] = False
+        if result["category"] not in (
+            PASS,
+            C_SYNTAX_ERROR,
+            C_IMPORT_ERROR,
+            C_RUNTIME_ERROR,
+            C_ASSERTION_FAILURE,
+            C_TIMEOUT,
+            C_NO_TESTS,
+            C_SANDBOX_ERROR,
+        ):
+            result["category"] = C_SANDBOX_ERROR
+        if result["tests_failed"] > 0 and result["category"] == C_SANDBOX_ERROR:
+            for f in result["failures"]:
+                if f.get("error_type") == "AssertionError":
+                    result["category"] = C_ASSERTION_FAILURE
+                    break
+                if f.get("error_type") in ("ImportError", "ModuleNotFoundError"):
+                    result["category"] = C_IMPORT_ERROR
+                    break
+        # Any nonzero exit_code that would otherwise end as "pass" -> sandbox_error
+        if result["category"] == PASS and result.get("exit_code", 0) != 0:
+            result["category"] = C_SANDBOX_ERROR
+            result["passed"] = False
         if result["category"] not in (
             PASS,
             C_SYNTAX_ERROR,

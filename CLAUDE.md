@@ -95,6 +95,7 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 5 (ca12cdc): prompts, tagged-text parser, and generate node — `prompts.py`, `parsing.py`, `schemas.py`, `nodes/generate.py`, `ScriptedLLM`; 10 new unit tests + 1 live (56).
 - Task 7: error analysis + revise nodes — `analysis.py`, `nodes/analyze_error.py`, `nodes/revise.py`, revise prompt in `prompts.py`; 10 new tests (88).
 - Task 7b: fix-up of Task 7 (no error_type use, category mapping for collection errors, restored tests); 88 tests.
+- Task 7c: fix-up of Tasks 6/7 (sandbox collection errors now passed=False with mapped category; revise never requires <tests>; category logic hardened); 88 tests.
 
 ### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
 - RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.
@@ -103,7 +104,7 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; set `GEMINI_API_KEY` in `.env` (git-ignored).
 - Tests: 88 passed; ruff clean.
 - Sandbox writes `solution.py` and `test_solution.py` separately; generated tests import via `from solution import ...` (see prompts.py).
-- Known Task 6 issue: collection errors come back as category `pass` with `passed` false and exit_code 2; routing (Task 8) MUST use `run_result['passed']`, not `category`. Fix classify() in a separate task.
+- Sandbox invariant (Task 7c): `run_result['passed']` is True iff category is `pass` and exit_code is 0; collection errors (pytest exit 2) come back passed=False with a mapped category. Task 8 routes on `run_result['passed']`.
 - Not started: Task 8 onward.
 
 ### Not started
