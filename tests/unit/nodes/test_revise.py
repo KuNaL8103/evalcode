@@ -282,7 +282,8 @@ def test_revise_prompt_contents_and_bounds() -> None:
     from evalcode.nodes.analyze_error import make_analyze_error_node
     from evalcode.prompts import build_revise_messages
 
-    long_traceback = "\n".join(f"line {i}" for i in range(1, 400)) + "\n\n"
+    # INTERNAL blank lines (">1500 chars"): "\n\n".join instead of "\n".join
+    long_traceback = "\n\n".join(f"line {i}" for i in range(1, 400))
     long_stdout = "y" * 1000
     long_stderr = "z" * 1000
 
@@ -387,8 +388,6 @@ def test_revise_prompt_contents_and_bounds() -> None:
     traceback_section = human_content[traceback_start:next_header_pos]
     # Strip only trailing whitespace (in case header separator forces it)
     traceback_section = traceback_section.rstrip()
-    print(f"traceback_section length: {len(traceback_section)}")
-    print(f"long_traceback[-1500:] length: {len(long_traceback[-1500:])}")
     assert len(traceback_section) <= 1500
     assert traceback_section == long_traceback[-1500:].rstrip()
 

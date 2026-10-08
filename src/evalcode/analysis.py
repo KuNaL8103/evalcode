@@ -292,9 +292,9 @@ def _determine_category(
     passed = run_result.get("passed")
     base_category = run_result.get("category") or "unknown"
 
-    # Rule 2: If truly passed with no exception text, return "pass"
-    # Nothing else may return "pass"
-    if passed and not exception_text.strip():
+    # Rule 2: If truly passed, return "pass" (unconditional).
+    # Nothing else may return "pass".
+    if passed:
         return "pass"
 
     # Rule 3: DEFENSIVE rule - if base_category == "pass" while passed is False,
@@ -364,18 +364,6 @@ def _determine_category(
             ]
             if any(p in lower_text for p in signature_patterns):
                 return "api_misuse"
-
-        # AssertionError -> assertion_failure (overrides base)
-        if exception_type == "AssertionError":
-            return "assertion_failure"
-
-        # SyntaxError -> syntax_error (overrides base)
-        if exception_type == "SyntaxError":
-            return "syntax_error"
-
-        # Timeout comes ONLY from run_result["category"] (sandbox), not from free text
-        if exception_type == "TimeoutExpired":
-            return "timeout"
 
     # Rule 5: Return the (mapped) base, constrained to the 8 literals + "api_misuse" + "unknown"
     valid_categories = {

@@ -90,6 +90,10 @@ def test_sandbox_passing():
     result = run_in_sandbox(PASSING_CODE, PASSING_TESTS, timeout_s=15.0, mem_mb=256)
     assert result["category"] == "pass"
     assert result["tests_total"] >= 1
+    assert result["exit_code"] == 0
+    # Invariant: passed == (category == "pass" and exit_code == 0)
+    assert result["passed"] is True
+    assert result["passed"] == (result["category"] == "pass" and result["exit_code"] == 0)
     import json
 
     assert json.dumps(result) is not None
@@ -129,6 +133,28 @@ def test_sandbox_collection_error():
     result = run_in_sandbox(PASSING_CODE, "def bad(\n", timeout_s=10.0, mem_mb=256)
     # Could be syntax or collection; just verify no crash and result exists.
     assert isinstance(result, dict)
+
+    # Probe (a): tests `from solution import nothere`, solution `def add(a, b): return a + b`
+    code_a = "def add(a, b): return a + b"
+    tests_a = "from solution import nothere\n\ndef test_add():\n    assert add(1, 2) == 3"
+    result_a = run_in_sandbox(code_a, tests_a, timeout_s=10.0, mem_mb=256)
+    assert result_a["passed"] is False
+    assert result_a["category"] == "import_error"
+    assert result_a["exit_code"] == 2
+    assert result_a["failures"] == []
+    # Invariant: passed == (category == "pass" and exit_code == 0)
+    assert result_a["passed"] == (result_a["category"] == "pass" and result_a["exit_code"] == 0)
+
+    # Probe (b): solution `from collections import OrderedDictt`, tests `from solution import f`
+    code_b = "from collections import OrderedDictt\ndef f(): return 1"
+    tests_b = "from solution import f\n\ndef test_f():\n    assert f() == 1"
+    result_b = run_in_sandbox(code_b, tests_b, timeout_s=10.0, mem_mb=256)
+    assert result_b["passed"] is False
+    assert result_b["category"] == "import_error"
+    assert result_b["exit_code"] == 2
+    assert result_b["failures"] == []
+    # Invariant: passed == (category == "pass" and exit_code == 0)
+    assert result_b["passed"] == (result_b["category"] == "pass" and result_b["exit_code"] == 0)
 
 
 def pid_alive(pid: int) -> bool:

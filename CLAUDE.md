@@ -96,6 +96,7 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 7: error analysis + revise nodes — `analysis.py`, `nodes/analyze_error.py`, `nodes/revise.py`, revise prompt in `prompts.py`; 10 new tests (88).
 - Task 7b: fix-up of Task 7 (no error_type use, category mapping for collection errors, restored tests); 88 tests.
 - Task 7c: fix-up of Tasks 6/7 (sandbox collection errors now passed=False with mapped category; revise never requires <tests>; category logic hardened); 88 tests.
+- Task 7d: sandbox cleanup (exit-code-2 mapping reachable, duplicate code removed), analysis category spec restored, invariant tested; 88 tests.
 
 ### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
 - RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.

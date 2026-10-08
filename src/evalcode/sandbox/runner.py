@@ -345,12 +345,6 @@ def run_in_sandbox(
             # Collection error (exit_code 2, no junit): passed=False, failures stays []
             if exit_code == 2:
                 result["passed"] = False
-            if (
-                result["category"] == C_SANDBOX_ERROR
-                and proc is not None
-                and proc.returncode not in (0, 1, 2)
-            ):
-                pass
         # Any nonzero exit_code that would otherwise end as "pass" -> sandbox_error
         if result["category"] == PASS and result.get("exit_code", 0) != 0:
             result["category"] = C_SANDBOX_ERROR
@@ -366,37 +360,6 @@ def run_in_sandbox(
             C_SANDBOX_ERROR,
         ):
             result["category"] = C_SANDBOX_ERROR
-        if result["tests_failed"] > 0 and result["category"] == C_SANDBOX_ERROR:
-            for f in result["failures"]:
-                if f.get("error_type") == "AssertionError":
-                    result["category"] = C_ASSERTION_FAILURE
-                    break
-                if f.get("error_type") in ("ImportError", "ModuleNotFoundError"):
-                    result["category"] = C_IMPORT_ERROR
-                    break
-        # Any nonzero exit_code that would otherwise end as "pass" -> sandbox_error
-        if result["category"] == PASS and result.get("exit_code", 0) != 0:
-            result["category"] = C_SANDBOX_ERROR
-            result["passed"] = False
-        if result["category"] not in (
-            PASS,
-            C_SYNTAX_ERROR,
-            C_IMPORT_ERROR,
-            C_RUNTIME_ERROR,
-            C_ASSERTION_FAILURE,
-            C_TIMEOUT,
-            C_NO_TESTS,
-            C_SANDBOX_ERROR,
-        ):
-            result["category"] = C_SANDBOX_ERROR
-        if result["tests_failed"] > 0 and result["category"] == C_SANDBOX_ERROR:
-            for f in result["failures"]:
-                if f.get("error_type") == "AssertionError":
-                    result["category"] = C_ASSERTION_FAILURE
-                    break
-                if f.get("error_type") in ("ImportError", "ModuleNotFoundError"):
-                    result["category"] = C_IMPORT_ERROR
-                    break
         if sys.platform == "win32" and mem_mb > 0:
             logger.warning("sandbox: rlimits skipped on Windows (wall-clock timeout only)")
     return result

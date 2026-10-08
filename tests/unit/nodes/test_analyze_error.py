@@ -100,8 +100,8 @@ KWARG_MISUSE_RUN_RESULT = {
 }
 
 IMPORT_NAME_MISUSE_RUN_RESULT = {
-    "passed": True,
-    "category": "pass",
+    "passed": False,
+    "category": "import_error",
     "exit_code": 2,
     "timed_out": False,
     "duration_s": 2.3,

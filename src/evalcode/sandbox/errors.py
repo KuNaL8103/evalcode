@@ -73,6 +73,17 @@ def classify(
 ) -> str:
     combined = (stdout_text or "") + (stderr_text or "") + (traceback_text or "")
     lower = combined.lower()
+    # Exit code 2 (pytest collection error / interrupted): map from exception type
+    # regardless of tests_total. This runs BEFORE keyword heuristics.
+    if exit_code == 2:
+        exc_type = _extract_last_exception_type(combined)
+        if exc_type == "SyntaxError":
+            return C_SYNTAX_ERROR
+        if exc_type in ("ImportError", "ModuleNotFoundError"):
+            return C_IMPORT_ERROR
+        if exc_type == "AssertionError":
+            return C_ASSERTION_FAILURE
+        return C_RUNTIME_ERROR
     if "syntaxerror" in lower or (lower.startswith("  file ") and "syntax error" in lower):
         return C_SYNTAX_ERROR
     if "modulenotfounderror" in lower or "importerror" in lower:
@@ -88,17 +99,6 @@ def classify(
     if "collection" in lower or ("collected" in lower and "error" in lower):
         return C_RUNTIME_ERROR
     if "runtime" in lower or "exception" in lower or "error" in lower:
-        return C_RUNTIME_ERROR
-    # Collection error (pytest exit code 2) with no junit results:
-    # classify from the LAST "E   <Type>:" or "<Type>:" line in stdout/stderr
-    if exit_code == 2 and tests_total == 0:
-        exc_type = _extract_last_exception_type(combined)
-        if exc_type == "SyntaxError":
-            return C_SYNTAX_ERROR
-        if exc_type in ("ImportError", "ModuleNotFoundError"):
-            return C_IMPORT_ERROR
-        if exc_type == "AssertionError":
-            return C_ASSERTION_FAILURE
         return C_RUNTIME_ERROR
     return C_SANDBOX_ERROR
 
