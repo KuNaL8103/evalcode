@@ -8,7 +8,7 @@ from typing import Any
 from evalcode.config import Settings
 from evalcode.sandbox.errors import C_SANDBOX_ERROR
 from evalcode.sandbox.runner import run_in_sandbox
-from evalcode.state import AgentState
+from evalcode.state import AgentState, utc_now_iso
 
 
 def make_run_tests_node(
@@ -18,7 +18,14 @@ def make_run_tests_node(
     def node(state: AgentState) -> dict[str, Any]:
         code = state.get("code", "") or ""
         tests = state.get("tests", "") or ""
+        attempt = state.get("attempt", 0)
         if not code.strip() or not tests.strip():
+            event = {
+                "node": "run_tests",
+                "attempt": attempt,
+                "ts": utc_now_iso(),
+                "summary": {"category": C_SANDBOX_ERROR, "error": "missing code or tests"},
+            }
             return {
                 "run_result": {
                     "passed": False,
@@ -39,9 +46,7 @@ def make_run_tests_node(
                     "stdout": "",
                     "stderr": "",
                 },
-                "history": [
-                    {"node": "run_tests", "status": "failed", "reason": "missing code/tests"}
-                ],
+                "history": [event],
             }
         result = sandbox(
             code,
@@ -49,17 +54,21 @@ def make_run_tests_node(
             timeout_s=float(settings.sandbox_timeout_s),
             mem_mb=int(settings.sandbox_mem_mb),
         )
-        history = state.get("history") or []
         summary = {
-            "node": "run_tests",
             "category": result["category"],
             "tests_total": result["tests_total"],
             "tests_failed": result["tests_failed"],
             "duration_s": round(result["duration_s"], 2),
         }
+        event = {
+            "node": "run_tests",
+            "attempt": attempt,
+            "ts": utc_now_iso(),
+            "summary": summary,
+        }
         return {
             "run_result": result,
-            "history": history + [{"node": "run_tests", "summary": summary}],
+            "history": [event],
         }
 
     return node
