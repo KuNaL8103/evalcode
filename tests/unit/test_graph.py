@@ -519,7 +519,7 @@ def test_graph_pauses_for_review():
     assert payload["human_round"] == 0
     assert payload["max_human_rounds"] == 2
     assert payload["code"] == CODE.strip()
-    assert payload["tests"].strip() == TESTS.strip()
+    assert payload["tests"] == TESTS
     assert payload["explanation"] == "sum"
     assert payload["run_summary"]["category"] == "pass"
     assert payload["run_summary"]["tests_total"] == 1
@@ -573,8 +573,6 @@ def test_resume_reject_feedback_reaches_revise():
 
     def sandbox(code, tests, timeout_s, mem_mb):
         sandbox_calls["count"] += 1
-        if sandbox_calls["count"] == 1:
-            return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
         return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
 
     deps = Dependencies(
@@ -664,7 +662,6 @@ def test_resume_edit_reruns_tests():
     )
     assert "__interrupt__" in result
     task_id = result["task_id"]
-    _ = sandbox_calls["last_code"]  # unused, just to show first code was captured
 
     # Resume with edit
     result = resume_task(
@@ -784,6 +781,17 @@ def test_sqlite_persistence_across_rebuilt_graphs(tmp_path):
             return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
 
         deps2 = Dependencies(llm=llm2, settings=make_settings(max_retries=3), sandbox=sandbox2)
+
+        # Verify checkpoint state before resume
+        from evalcode.graph import build_graph
+
+        snapshot = build_graph(deps2, checkpointer=checkpointer2).get_state(
+            {"configurable": {"thread_id": task_id}}
+        )
+        assert snapshot.values["task_id"] == task_id
+        assert snapshot.values["code"] == original_code
+        assert snapshot.next == ("human_review",)
+
         result = resume_task(task_id, {"decision": "approve"}, deps2, checkpointer=checkpointer2)
 
         assert result["status"] == "approved"
@@ -791,3 +799,8 @@ def test_sqlite_persistence_across_rebuilt_graphs(tmp_path):
         # The resumed state should have the original task_id and code
         assert result["task_id"] == task_id
         assert result["code"] == original_code
+
+    # After both contexts exit, verify the DB file is released
+    # and deletable (Windows handle released)
+    db_path.unlink()
+    assert not db_path.exists()

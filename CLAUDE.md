@@ -23,8 +23,7 @@ evalcode/
 │   ├── prompts.py  parsing.py  schemas.py  nodes/generate.py  (Task 5)
 │   ├── sandbox/runner.py  sandbox/errors.py  nodes/run_tests.py  (Task 6)
 │   ├── nodes/analyze_error.py  nodes/revise.py            (Task 7)
-│   ├── graph.py  nodes/terminal.py                        (Task 8)
-│   ├── nodes/human_review.py  persistence.py              (Task 9)
+│   ├── graph.py  nodes/terminal.py  nodes/human_review.py  persistence.py   (Task 8-9)
 │   ├── nodes/retrieve.py                                  (Task 10)
 │   ├── observability.py                                   (Task 11)
 │   └── cli.py                                             (Task 12)
@@ -100,14 +99,14 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 8: graph wiring - `graph.py` (`Dependencies`, `build_graph`, routers, `run_task`/`stream_task`), `nodes/terminal.py`; run_tests history fix; 10 new tests + 1 live (98).
 - Task 9: human review - `nodes/human_review.py` (interrupt + `apply_human_decision`), `persistence.py` (`open_checkpointer`), `resume_task`/`pending_review`, reject feedback in revise; 8 new tests (106).
 
-### Latest milestone (Task 9: human-in-the-loop review)
-- Human review node with `interrupt` payload: task_id, attempt, code, tests, explanation, run_summary, human_round, max_human_rounds.
-- Resume decisions: approve → finalize; reject + feedback → revise (retries_used unchanged, attempt+1, human_rounds+1); edit + code → run_tests (same retry budget, human_rounds unchanged).
-- `apply_human_decision` pure function for testability; `human_review_node` side-effect-free before `interrupt()`.
-- SQLite checkpointer helper `open_checkpointer` (context manager, parent dirs created, connection closed on exit).
-- `run_task` / `stream_task` require checkpointer when `auto_approve=False`; `pending_review(result)` extracts interrupt payload; `resume_task(task_id, response, deps, checkpointer)` resumes.
-- `route_after_human` exported: approve→finalize, edit→run_tests, reject→revise (if rounds ≤ max) else fail.
+### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
+- RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.
+- Timeout evidence (A7): `elapsed <= 6.0` (actual 3.45s); pid_file 2 PIDs (e.g. 56216, 65984); both `pid_alive` false (Windows `tasklist`).
+- Provider: `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; live: PASS, first reply followed tagged format, tokens used.
+- Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; set `GEMINI_API_KEY` in `.env` (git-ignored).
 - Tests: 106 passed; ruff clean.
+- Sandbox writes `solution.py` and `test_solution.py` separately; generated tests import via `from solution import ...` (see prompts.py).
+- Sandbox invariant (Task 7c): `run_result['passed']` is True iff category is `pass` and exit_code is 0; collection errors (pytest exit 2) come back passed=False with a mapped category. Task 8 routes on `run_result['passed']`.
 
 ### Not started
 Task 10 onward.
