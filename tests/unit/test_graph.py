@@ -519,7 +519,7 @@ def test_graph_pauses_for_review():
     assert payload["human_round"] == 0
     assert payload["max_human_rounds"] == 2
     assert payload["code"] == CODE.strip()
-    assert payload["tests"] == TESTS
+    assert payload["tests"] == TESTS.strip()
     assert payload["explanation"] == "sum"
     assert payload["run_summary"]["category"] == "pass"
     assert payload["run_summary"]["tests_total"] == 1
@@ -783,8 +783,6 @@ def test_sqlite_persistence_across_rebuilt_graphs(tmp_path):
         deps2 = Dependencies(llm=llm2, settings=make_settings(max_retries=3), sandbox=sandbox2)
 
         # Verify checkpoint state before resume
-        from evalcode.graph import build_graph
-
         snapshot = build_graph(deps2, checkpointer=checkpointer2).get_state(
             {"configurable": {"thread_id": task_id}}
         )

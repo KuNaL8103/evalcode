@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
-from evalcode.config import Settings
+from evalcode.config import Settings, get_settings
 from evalcode.graph import default_dependencies, run_task
 
 
 @pytest.mark.live
 def test_live_graph_basic():
     """Run a simple task through the full graph with real Gemini."""
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = get_settings().gemini_api_key.get_secret_value()
     if not api_key:
-        pytest.skip("GEMINI_API_KEY not set")
+        pytest.skip("GEMINI_API_KEY not configured (env or .env)")
 
     settings = Settings(max_retries=1)
     deps = default_dependencies(settings)
