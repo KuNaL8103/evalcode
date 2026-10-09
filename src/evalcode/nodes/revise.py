@@ -115,6 +115,7 @@ def make_revise_node(llm: TextLLM, settings: Settings) -> Callable[[AgentState],
             "explanation": bundle.explanation if bundle else "",
             "attempt": attempt,
             "retries_used": retries_used,
+            "human_decision": None,
             "human_feedback": None,
             "status": "running",
             "token_usage": usage,
@@ -135,6 +136,8 @@ def _failed(
     return {
         "status": "failed",
         "failure_reason": str(exc),
+        "human_decision": None,
+        "human_feedback": None,
         "history": [
             _step(
                 "revise",
@@ -162,6 +165,8 @@ def _double_parse_failure(
             "strict format re-ask. Retry the run, or pick a stronger model via "
             "LLM_MODEL."
         ),
+        "human_decision": None,
+        "human_feedback": None,
         "history": [
             _step(
                 "revise",

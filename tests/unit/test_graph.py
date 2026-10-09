@@ -12,6 +12,9 @@ from evalcode.graph import (
     Dependencies,
     build_graph,
     initial_state,
+    pending_review,
+    resume_task,
+    route_after_human,
     route_after_llm,
     route_after_tests,
     run_task,
@@ -69,18 +72,17 @@ def fake_sandbox_fail(code: str, tests: str, timeout_s: float, mem_mb: int) -> R
 
 def test_routers():
     # route_after_tests
-    # pass
+    # pass with auto_approve=True -> "finalize"
     state: dict[str, Any] = {
         "run_result": {"passed": True, "category": "pass"},
         "retries_used": 0,
         "max_retries": 3,
+        "auto_approve": True,
     }
     assert route_after_tests(state) == "finalize"
-    # pass with auto_approve True/False -> both "finalize"
-    state["auto_approve"] = True
-    assert route_after_tests(state) == "finalize"
+    # pass with auto_approve=False -> "human_review"
     state["auto_approve"] = False
-    assert route_after_tests(state) == "finalize"
+    assert route_after_tests(state) == "human_review"
     # fail with retries left
     state["run_result"] = {"passed": False, "category": "assertion_failure"}
     state["retries_used"] = 0
@@ -101,6 +103,25 @@ def test_routers():
     assert route_after_llm({"status": "running"}) == "run_tests"
     assert route_after_llm({"status": "approved"}) == "run_tests"
 
+    # route_after_human
+    base_human = {
+        "human_decision": "approve",
+        "human_rounds": 0,
+        "max_human_rounds": 2,
+    }
+    assert route_after_human(base_human) == "finalize"
+    base_human["human_decision"] = "edit"
+    assert route_after_human(base_human) == "run_tests"
+    base_human["human_decision"] = "reject"
+    base_human["human_rounds"] = 0
+    assert route_after_human(base_human) == "revise"
+    base_human["human_rounds"] = 2
+    assert route_after_human(base_human) == "revise"  # at limit, still revise
+    base_human["human_rounds"] = 3
+    assert route_after_human(base_human) == "fail"  # exceeds limit -> fail
+    base_human["human_decision"] = "unknown"
+    assert route_after_human(base_human) == "fail"
+
 
 def test_graph_pass_first_try():
     # 1 scripted reply, sandbox PASS
@@ -113,7 +134,7 @@ def test_graph_pass_first_try():
 
     deps = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
 
-    result = run_task("write a function add(a, b)", deps)
+    result = run_task("write a function add(a, b)", deps, auto_approve=True)
 
     assert result["status"] == "approved"
     assert result["final_code"] == CODE.strip()
@@ -146,7 +167,7 @@ def test_graph_fail_then_pass():
 
     deps = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
 
-    result = run_task("write a function add(a, b)", deps)
+    result = run_task("write a function add(a, b)", deps, auto_approve=True)
 
     assert result["status"] == "approved"
     assert result["final_code"] == CODE.strip()  # v2
@@ -165,9 +186,17 @@ def test_graph_fail_then_pass():
         "finalize",
     ]
     # revise LLM call's prompt contains "AssertionError"
-    # Check that the second LLM call (revise) had the error in context
-    # The ScriptedLLM records calls; verify second call had messages with error info
-    # (We just verify token_usage and call count here)
+    # The second call (index 1) is the revise call; its messages are in llm.calls[1]
+    revise_messages = llm.calls[1]
+    # Find the human message content (last message is human)
+    human_msg = None
+    for msg in revise_messages:
+        if hasattr(msg, "content") and isinstance(msg.content, str):
+            human_msg = msg.content
+    assert human_msg is not None, "revise call should have a human message"
+    assert "AssertionError" in human_msg, (
+        f"revise prompt should contain AssertionError, got: {human_msg[:500]}"
+    )
     assert result["token_usage"]["llm_calls"] == 2
 
 
@@ -182,7 +211,7 @@ def test_graph_exhausted_retries():
 
     deps = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
 
-    result = run_task("write a function add(a, b)", deps)
+    result = run_task("write a function add(a, b)", deps, auto_approve=True)
 
     assert result["status"] == "failed"
     assert result["attempt"] == 4  # generation 1 + 3 retries
@@ -203,7 +232,7 @@ def test_graph_recursion_limit():
 
     deps = Dependencies(llm=llm, settings=make_settings(max_retries=10), sandbox=sandbox)
 
-    result = run_task("write a function add(a, b)", deps)
+    result = run_task("write a function add(a, b)", deps, auto_approve=True)
 
     assert result["status"] == "failed"
     assert result["attempt"] == 11  # 1 + 10 retries
@@ -220,7 +249,7 @@ def test_graph_llm_failures():
         pytest.fail("sandbox should not be called")
 
     deps1 = Dependencies(llm=llm1, settings=make_settings(max_retries=3), sandbox=sandbox)
-    result1 = run_task("write a function add(a, b)", deps1)
+    result1 = run_task("write a function add(a, b)", deps1, auto_approve=True)
     assert result1["status"] == "failed"
     assert result1["failure_reason"]
     assert "daily limit" in result1["failure_reason"].lower()
@@ -240,7 +269,7 @@ def test_graph_llm_failures():
         return fake_sandbox_fail(code, tests, timeout_s, mem_mb)
 
     deps2 = Dependencies(llm=llm2, settings=make_settings(max_retries=3), sandbox=sandbox2)
-    result2 = run_task("write a function add(a, b)", deps2)
+    result2 = run_task("write a function add(a, b)", deps2, auto_approve=True)
     assert result2["status"] == "failed"
     assert sandbox_calls["count"] == 1
     assert result2["history"][-1]["node"] == "fail"
@@ -265,7 +294,9 @@ def test_graph_provided_tests():
 
     deps = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
 
-    result = run_task("write a function add(a, b)", deps, provided_tests=provided)
+    result = run_task(
+        "write a function add(a, b)", deps, provided_tests=provided, auto_approve=True
+    )
 
     assert result["status"] == "approved"
     assert result["tests"] == provided
@@ -282,8 +313,14 @@ def test_run_and_stream_task():
     deps = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
 
     # Run both with fresh fakes
-    result = run_task("write add(a, b)", deps)
+    result = run_task("write add(a, b)", deps, auto_approve=True)
     history_nodes = [e["node"] for e in result["history"]]
+
+    # Assertions on the result
+    assert result["task"] == "write add(a, b)"
+    assert result["max_retries"] == 3
+    assert result["max_human_rounds"] == 2
+    assert result["task_id"]  # non-empty string
 
     # Test initial_state keys and values for a given Settings
     settings = make_settings(max_retries=3, max_human_rounds=2)
@@ -327,7 +364,7 @@ def test_run_and_stream_task():
     deps2 = Dependencies(llm=llm2, settings=make_settings(max_retries=3), sandbox=sandbox2)
 
     stream_nodes = []
-    for node_name, _update in stream_task("write add(a, b)", deps2):
+    for node_name, _update in stream_task("write add(a, b)", deps2, auto_approve=True):
         stream_nodes.append(node_name)
 
     assert stream_nodes == history_nodes
@@ -342,7 +379,415 @@ def test_build_graph_topology():
     deps = Dependencies(llm=llm, settings=make_settings(), sandbox=sandbox)
     graph = build_graph(deps, checkpointer=None)
     nodes = set(graph.get_graph().nodes.keys())
-    expected = {"generate", "run_tests", "analyze_error", "revise", "finalize", "fail"}
+    expected = {
+        "generate",
+        "run_tests",
+        "analyze_error",
+        "revise",
+        "human_review",
+        "finalize",
+        "fail",
+    }
     assert expected.issubset(nodes)
-    assert "human_review" not in nodes
     assert "retrieve" not in nodes
+
+
+# --- Task 9: Human-in-the-loop tests ---
+
+
+def test_route_after_human_and_review_routing():
+    # route_after_tests with pass + auto_approve True/False
+    state_pass_auto = {
+        "run_result": {"passed": True, "category": "pass"},
+        "retries_used": 0,
+        "max_retries": 3,
+        "auto_approve": True,
+    }
+    assert route_after_tests(state_pass_auto) == "finalize"
+
+    state_pass_human = {**state_pass_auto, "auto_approve": False}
+    assert route_after_tests(state_pass_human) == "human_review"
+
+    # route_after_human all branches
+    base = {"human_rounds": 0, "max_human_rounds": 2}
+    assert route_after_human({**base, "human_decision": "approve"}) == "finalize"
+    assert route_after_human({**base, "human_decision": "edit"}) == "run_tests"
+    assert route_after_human({**base, "human_decision": "reject"}) == "revise"
+    # at limit -> revise
+    assert route_after_human({**base, "human_decision": "reject", "human_rounds": 2}) == "revise"
+    # exceeds limit -> fail
+    assert route_after_human({**base, "human_decision": "reject", "human_rounds": 3}) == "fail"
+    # unknown -> fail
+    assert route_after_human({**base, "human_decision": "unknown"}) == "fail"
+
+
+def test_apply_human_decision():
+    from evalcode.nodes.human_review import apply_human_decision
+
+    base_state = {
+        "attempt": 1,
+        "human_rounds": 0,
+        "max_human_rounds": 2,
+    }
+
+    # approve
+    result = apply_human_decision(base_state, {"decision": "approve"})
+    assert result["human_decision"] == "approve"
+    assert result["human_feedback"] is None
+    assert "human_rounds" not in result  # unchanged
+    assert len(result["history"]) == 1
+    assert result["history"][0]["summary"]["decision"] == "approve"
+    assert result["history"][0]["summary"]["human_rounds"] == 0
+
+    # reject with feedback, rounds increments
+    result = apply_human_decision(base_state, {"decision": "reject", "feedback": "add type hints"})
+    assert result["human_decision"] == "reject"
+    assert result["human_feedback"] == "add type hints"
+    assert result["human_rounds"] == 1
+    assert result["history"][0]["summary"]["decision"] == "reject"
+    assert result["history"][0]["summary"]["human_rounds"] == 1
+    assert result["history"][0]["summary"]["feedback"] == "add type hints"
+
+    # reject exhausting max_human_rounds -> failure_reason
+    state_at_limit = {**base_state, "human_rounds": 2, "max_human_rounds": 2}
+    result = apply_human_decision(state_at_limit, {"decision": "reject", "feedback": "still wrong"})
+    assert result["human_decision"] == "reject"
+    assert result["human_rounds"] == 3
+    assert "failure_reason" in result
+    assert "max human rounds" in result["failure_reason"].lower()
+    assert "3 time(s)" in result["failure_reason"]
+    assert "still wrong" in result["failure_reason"]
+
+    # edit keeps human_rounds unchanged, returns new code
+    result = apply_human_decision(
+        base_state, {"decision": "edit", "code": "def add(a,b): return a+b"}
+    )
+    assert result["human_decision"] == "edit"
+    assert result["human_feedback"] is None
+    assert "human_rounds" not in result  # unchanged
+    assert result["code"] == "def add(a,b): return a+b"
+    assert result["history"][0]["summary"]["decision"] == "edit"
+
+    # malformed responses raise ValueError
+    with pytest.raises(ValueError, match="must be a dict"):
+        apply_human_decision(base_state, "not a dict")
+    with pytest.raises(ValueError, match="Unknown decision"):
+        apply_human_decision(base_state, {"decision": "invalid"})
+    with pytest.raises(ValueError, match="non-empty.*feedback"):
+        apply_human_decision(base_state, {"decision": "reject", "feedback": ""})
+    with pytest.raises(ValueError, match="non-empty.*feedback"):
+        apply_human_decision(base_state, {"decision": "reject"})
+    with pytest.raises(ValueError, match="non-empty.*code"):
+        apply_human_decision(base_state, {"decision": "edit", "code": ""})
+    with pytest.raises(ValueError, match="non-empty.*code"):
+        apply_human_decision(base_state, {"decision": "edit"})
+
+    # input state not mutated
+    original_human_rounds = base_state["human_rounds"]
+    apply_human_decision(base_state, {"decision": "reject", "feedback": "x"})
+    assert base_state["human_rounds"] == original_human_rounds
+
+
+def test_graph_pauses_for_review():
+    from langgraph.checkpoint.memory import MemorySaver
+
+    llm = ScriptedLLM([bundle_text(CODE, TESTS, explanation="sum")])
+    calls = {"sandbox": 0}
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        calls["sandbox"] += 1
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    deps = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
+    checkpointer = MemorySaver()
+
+    result = run_task(
+        "write a function add(a, b)", deps, auto_approve=False, checkpointer=checkpointer
+    )
+
+    # Graph pauses at human_review
+    assert "__interrupt__" in result
+    assert result["status"] == "running"  # still running, awaiting review
+    assert result["final_code"] is None
+    assert calls["sandbox"] == 1  # sandbox called exactly once
+
+    # pending_review extracts the payload
+    payload = pending_review(result)
+    assert payload is not None
+    assert payload["task_id"] == result["task_id"]
+    assert payload["attempt"] == 1
+    assert payload["human_round"] == 0
+    assert payload["max_human_rounds"] == 2
+    assert payload["code"] == CODE.strip()
+    assert payload["tests"].strip() == TESTS.strip()
+    assert payload["explanation"] == "sum"
+    assert payload["run_summary"]["category"] == "pass"
+    assert payload["run_summary"]["tests_total"] == 1
+    assert payload["run_summary"]["tests_failed"] == 0
+
+    # run_task without checkpointer + auto_approve=False raises ValueError
+    with pytest.raises(ValueError, match="auto_approve=False requires a checkpointer"):
+        run_task("write a function add(a, b)", deps, auto_approve=False, checkpointer=None)
+
+
+def test_resume_approve():
+    from langgraph.checkpoint.memory import MemorySaver
+
+    llm = ScriptedLLM([bundle_text(CODE, TESTS, explanation="sum")])
+    calls = {"sandbox": 0}
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        calls["sandbox"] += 1
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    deps = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
+    checkpointer = MemorySaver()
+
+    # First run: pauses at human_review
+    result = run_task(
+        "write a function add(a, b)", deps, auto_approve=False, checkpointer=checkpointer
+    )
+    assert "__interrupt__" in result
+    task_id = result["task_id"]
+
+    # Resume with approve
+    result = resume_task(task_id, {"decision": "approve"}, deps, checkpointer=checkpointer)
+
+    assert result["status"] == "approved"
+    assert result["final_code"] == CODE.strip()
+    history_nodes = [e["node"] for e in result["history"]]
+    assert history_nodes == ["generate", "run_tests", "human_review", "finalize"]
+
+
+def test_resume_reject_feedback_reaches_revise():
+    from langgraph.checkpoint.memory import MemorySaver
+
+    # LLM replies: 1st generate, 2nd revise (after reject)
+    llm = ScriptedLLM(
+        [
+            bundle_text(CODE, TESTS, explanation="first"),
+            bundle_text(CODE, TESTS, explanation="revised with type hints"),
+        ]
+    )
+    sandbox_calls = {"count": 0}
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        sandbox_calls["count"] += 1
+        if sandbox_calls["count"] == 1:
+            return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    deps = Dependencies(
+        llm=llm, settings=make_settings(max_retries=3, max_human_rounds=2), sandbox=sandbox
+    )
+    checkpointer = MemorySaver()
+
+    # First run: generates, passes, pauses at human_review
+    result = run_task(
+        "write a function add(a, b)", deps, auto_approve=False, checkpointer=checkpointer
+    )
+    assert "__interrupt__" in result
+    task_id = result["task_id"]
+    assert result["human_rounds"] == 0
+
+    # Resume with reject + feedback
+    result = resume_task(
+        task_id,
+        {"decision": "reject", "feedback": "add type hints"},
+        deps,
+        checkpointer=checkpointer,
+    )
+
+    # Should have gone to revise (attempt 2), then run_tests, then paused again at human_review
+    assert "__interrupt__" in result
+    assert result["attempt"] == 2
+    assert result["retries_used"] == 0  # reject doesn't consume retries_used
+    assert result["human_rounds"] == 1
+    # human_feedback is consumed by revise and cleared (set to None)
+    assert result["human_feedback"] is None
+    assert result["status"] == "running"
+
+    # Verify the revise LLM call's prompt contained the feedback
+    revise_messages = llm.calls[1]  # second call is revise
+    human_msg = None
+    for msg in revise_messages:
+        if hasattr(msg, "content") and isinstance(msg.content, str):
+            human_msg = msg.content
+    assert human_msg is not None
+    assert "add type hints" in human_msg, (
+        f"revise prompt should contain human feedback, got: {human_msg[:500]}"
+    )
+
+    # No analyze_error node in history (reject bypasses it)
+    # After reject -> revise -> run_tests (pass) -> human_review (interrupt again).
+    # The second human_review is paused at interrupt, so its history event
+    # hasn't been added yet (added on next resume).
+    history_nodes = [e["node"] for e in result["history"]]
+    assert "analyze_error" not in history_nodes
+    assert history_nodes == ["generate", "run_tests", "human_review", "revise", "run_tests"]
+
+    # Second resume: approve
+    result = resume_task(task_id, {"decision": "approve"}, deps, checkpointer=checkpointer)
+    assert result["status"] == "approved"
+    assert result["final_code"] == CODE.strip()
+    history_nodes = [e["node"] for e in result["history"]]
+    assert history_nodes == [
+        "generate",
+        "run_tests",
+        "human_review",
+        "revise",
+        "run_tests",
+        "human_review",
+        "finalize",
+    ]
+
+
+def test_resume_edit_reruns_tests():
+    from langgraph.checkpoint.memory import MemorySaver
+
+    EDITED_CODE = "def add(a, b):\n    return a + b\n"
+
+    llm = ScriptedLLM([bundle_text(CODE, TESTS, explanation="first")])
+    sandbox_calls = {"count": 0, "last_code": None}
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        sandbox_calls["count"] += 1
+        sandbox_calls["last_code"] = code
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    deps = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
+    checkpointer = MemorySaver()
+
+    # First run: generates, passes, pauses at human_review
+    result = run_task(
+        "write a function add(a, b)", deps, auto_approve=False, checkpointer=checkpointer
+    )
+    assert "__interrupt__" in result
+    task_id = result["task_id"]
+    _ = sandbox_calls["last_code"]  # unused, just to show first code was captured
+
+    # Resume with edit
+    result = resume_task(
+        task_id, {"decision": "edit", "code": EDITED_CODE}, deps, checkpointer=checkpointer
+    )
+
+    # Should have rerun tests with EDITED code, then paused again
+    assert "__interrupt__" in result
+    assert sandbox_calls["count"] == 2
+    assert sandbox_calls["last_code"] == EDITED_CODE.strip()
+    assert result["human_rounds"] == 0  # edit doesn't increment human_rounds
+    assert result["code"] == EDITED_CODE.strip()
+
+    # LLM calls unchanged (no revise call)
+    assert len(llm.calls) == 1
+
+    # Second resume: approve
+    result = resume_task(task_id, {"decision": "approve"}, deps, checkpointer=checkpointer)
+    assert result["status"] == "approved"
+    assert result["final_code"] == EDITED_CODE.strip()
+    history_nodes = [e["node"] for e in result["history"]]
+    assert history_nodes == [
+        "generate",
+        "run_tests",
+        "human_review",
+        "run_tests",
+        "human_review",
+        "finalize",
+    ]
+
+
+def test_reject_exhausts_human_rounds():
+    from langgraph.checkpoint.memory import MemorySaver
+
+    # LLM replies: 1st generate, then 2 revise calls (for 2 rejects before exhaustion)
+    llm = ScriptedLLM(
+        [
+            bundle_text(CODE, TESTS, explanation="first"),
+            bundle_text(CODE, TESTS, explanation="rev1"),
+            bundle_text(CODE, TESTS, explanation="rev2"),
+        ]
+    )
+    sandbox_calls = {"count": 0}
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        sandbox_calls["count"] += 1
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    # max_human_rounds = 2
+    deps = Dependencies(
+        llm=llm, settings=make_settings(max_retries=3, max_human_rounds=2), sandbox=sandbox
+    )
+    checkpointer = MemorySaver()
+
+    # First run: passes -> human_review
+    result = run_task(
+        "write a function add(a, b)", deps, auto_approve=False, checkpointer=checkpointer
+    )
+    assert "__interrupt__" in result
+    task_id = result["task_id"]
+
+    # Reject 1
+    result = resume_task(
+        task_id, {"decision": "reject", "feedback": "feedback 1"}, deps, checkpointer=checkpointer
+    )
+    assert "__interrupt__" in result
+    assert result["human_rounds"] == 1
+
+    # Reject 2
+    result = resume_task(
+        task_id, {"decision": "reject", "feedback": "feedback 2"}, deps, checkpointer=checkpointer
+    )
+    assert "__interrupt__" in result
+    assert result["human_rounds"] == 2
+
+    # Reject 3 -> exhausts (human_rounds becomes 3 > max_human_rounds=2)
+    result = resume_task(
+        task_id, {"decision": "reject", "feedback": "feedback 3"}, deps, checkpointer=checkpointer
+    )
+    assert result["status"] == "failed"
+    assert "max human rounds" in result["failure_reason"].lower()
+    assert result["history"][-1]["node"] == "fail"
+    assert len(llm.calls) == 3  # generate + 2 revise calls
+
+
+def test_sqlite_persistence_across_rebuilt_graphs(tmp_path):
+    from evalcode.persistence import open_checkpointer
+
+    llm = ScriptedLLM([bundle_text(CODE, TESTS, explanation="first")])
+    sandbox_calls = {"count": 0}
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        sandbox_calls["count"] += 1
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    db_path = tmp_path / "checkpoints.db"
+
+    # First graph: run to pause
+    with open_checkpointer(db_path) as checkpointer1:
+        deps1 = Dependencies(llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox)
+        result = run_task(
+            "write a function add(a, b)", deps1, auto_approve=False, checkpointer=checkpointer1
+        )
+        assert "__interrupt__" in result
+        task_id = result["task_id"]
+        original_code = result["code"]
+        assert original_code == CODE.strip()
+
+    # Second graph: resume with new dependencies
+    with open_checkpointer(db_path) as checkpointer2:
+        # New LLM and sandbox (simulating process restart)
+        llm2 = ScriptedLLM([bundle_text(CODE, TESTS, explanation="resumed")])
+        sandbox_calls2 = {"count": 0}
+
+        def sandbox2(code, tests, timeout_s, mem_mb):
+            sandbox_calls2["count"] += 1
+            return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+        deps2 = Dependencies(llm=llm2, settings=make_settings(max_retries=3), sandbox=sandbox2)
+        result = resume_task(task_id, {"decision": "approve"}, deps2, checkpointer=checkpointer2)
+
+        assert result["status"] == "approved"
+        assert result["final_code"] == CODE.strip()
+        # The resumed state should have the original task_id and code
+        assert result["task_id"] == task_id
+        assert result["code"] == original_code

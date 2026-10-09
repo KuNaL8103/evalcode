@@ -208,6 +208,8 @@ All errors derive from `LLMError`. Nodes talk only to `TextLLM`; nothing else im
 
 `human_review` calls `langgraph.types.interrupt(payload)` with `{task, code, tests, run_summary, attempt, retrieved_doc_ids, human_round}`. Execution pauses at the checkpoint (needs a checkpointer and `thread_id`). Resume with `Command(resume={"action": "approve"|"reject"|"edit", "feedback"?: str, "code"?: str})`. On resume LangGraph re-executes the node from its start, so everything before `interrupt()` must be side-effect free. Streaming surfaces the pause as an `__interrupt__` update.
 
+**Task 9 decisions**: The resume payload uses `{"decision": "approve"|"reject"|"edit", "feedback"?: str, "code"?: str}` (not `action`). `human_rounds` counts only rejections (not edits). A reject→revise transition does not increment `retries_used`; only automatic test-failure-driven revisions do. An edit re-runs tests with the new code and keeps the same retry budget. `run_task` returns the interrupted state with `__interrupt__` when paused; callers use `pending_review(result)` to extract the payload. `auto_approve=False` requires a checkpointer (enforced at entry). The `human_review` node has no side effects before `interrupt()` so it safely re-executes on resume.
+
 ## 8. Observability
 
 - Structured JSONL per run: `logs/<run_id>/events.jsonl`; one event per node execution: `run_id, thread_id, task_id, node, attempt, ts, duration_ms`, retrieved doc ids + scores, run_result summary, decision, LLM usage for the node (tokens, calls, `api_retries`, `wait_s`, estimated flag) and cumulative totals; plus `summary.json` at the end.
