@@ -14,14 +14,16 @@ from evalcode.graph import (
     initial_state,
     pending_review,
     resume_task,
+    route_after_analysis,
     route_after_human,
     route_after_llm,
+    route_after_retrieve,
     route_after_tests,
     run_task,
     stream_task,
 )
 from evalcode.state import RunResult
-from tests.fakes import ScriptedLLM, bundle_text
+from tests.fakes import FakeRetriever, ScriptedLLM, bundle_text, make_doc
 
 CODE = 'import math\n\n\ndef add(a, b):\n    """Return a + b."""\n    return a + b\n'
 TESTS = "from solution import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
@@ -616,6 +618,22 @@ def test_resume_reject_feedback_reaches_revise():
         f"revise prompt should contain human feedback, got: {human_msg[:500]}"
     )
 
+    # Human rejected a PASSING solution: prompt should NOT contain
+    # "Diagnosis:" and NOT contain "Category: pass",
+    # and SHOULD contain "The tests currently PASS"
+    assert "Diagnosis:" not in human_msg, (
+        "revise prompt should NOT contain 'Diagnosis:' when human "
+        f"rejected passing solution, got: {human_msg[:500]}"
+    )
+    assert "Category: pass" not in human_msg, (
+        "revise prompt should NOT contain 'Category: pass' when human "
+        f"rejected passing solution, got: {human_msg[:500]}"
+    )
+    assert "The tests currently PASS" in human_msg, (
+        "revise prompt should contain 'The tests currently PASS' when "
+        f"human rejected passing solution, got: {human_msg[:500]}"
+    )
+
     # No analyze_error node in history (reject bypasses it)
     # After reject -> revise -> run_tests (pass) -> human_review (interrupt again).
     # The second human_review is paused at interrupt, so its history event
@@ -802,3 +820,339 @@ def test_sqlite_persistence_across_rebuilt_graphs(tmp_path):
     # and deletable (Windows handle released)
     db_path.unlink()
     assert not db_path.exists()
+
+
+# --- Task 10: RAG integration tests ---
+
+
+def test_route_after_analysis_and_retrieve():
+    """Test route_after_analysis and route_after_retrieve routers."""
+    # needs_docs False -> revise
+    state = {"error_analysis": {"needs_docs": False, "retrieval_queries": ["q1"]}}
+    assert route_after_analysis(state) == "revise"
+
+    # needs_docs True but empty queries -> revise
+    state = {"error_analysis": {"needs_docs": True, "retrieval_queries": []}}
+    assert route_after_analysis(state) == "revise"
+
+    # Fresh queries -> retrieve
+    state = {
+        "error_analysis": {"needs_docs": True, "retrieval_queries": ["fresh query"]},
+        "retrieval_queries": ["old query"],
+    }
+    assert route_after_analysis(state) == "retrieve"
+
+    # All queries already used -> revise (dedupe)
+    state = {
+        "error_analysis": {"needs_docs": True, "retrieval_queries": ["q1", "q2"]},
+        "retrieval_queries": ["q1", "q2"],
+    }
+    assert route_after_analysis(state) == "revise"
+
+    # Some queries fresh -> retrieve
+    state = {
+        "error_analysis": {"needs_docs": True, "retrieval_queries": ["q1", "q3"]},
+        "retrieval_queries": ["q1", "q2"],
+    }
+    assert route_after_analysis(state) == "retrieve"
+
+    # route_after_retrieve: code empty -> generate
+    assert route_after_retrieve({"code": ""}) == "generate"
+    assert route_after_retrieve({"code": "   "}) == "generate"
+    # code present -> revise
+    assert route_after_retrieve({"code": "def foo(): pass"}) == "revise"
+
+
+def test_topology_rag_on_and_off():
+    """Test graph topology with and without retriever."""
+    llm = ScriptedLLM([bundle_text(CODE, TESTS)])
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    # RAG off (retriever=None)
+    deps_off = Dependencies(llm=llm, settings=make_settings(), sandbox=sandbox)
+    graph_off = build_graph(deps_off, checkpointer=None)
+    nodes_off = set(graph_off.get_graph().nodes.keys())
+    expected_base = {
+        "generate",
+        "run_tests",
+        "analyze_error",
+        "revise",
+        "human_review",
+        "finalize",
+        "fail",
+    }
+    assert expected_base.issubset(nodes_off)
+    assert "retrieve" not in nodes_off
+
+    # RAG on (FakeRetriever)
+    retriever = FakeRetriever(default=[make_doc("d1")])
+    deps_on = Dependencies(llm=llm, settings=make_settings(), sandbox=sandbox, retriever=retriever)
+    graph_on = build_graph(deps_on, checkpointer=None)
+    nodes_on = set(graph_on.get_graph().nodes.keys())
+    assert expected_base.issubset(nodes_on)
+    assert "retrieve" in nodes_on
+    # Graph also includes __start__ and __end__ nodes
+    assert len(nodes_on) >= len(expected_base) + 1  # base + retrieve + internal nodes
+
+
+def test_graph_rag_grounds_generate():
+    """RAG on: retrieve runs first, generate prompt contains [doc:<id>],
+    history starts with retrieve, result has retrieved_docs."""
+    doc = make_doc("doc-json", "json.loads parses JSON", score=0.9)
+    retriever = FakeRetriever(default=[doc])
+
+    llm = ScriptedLLM([bundle_text(CODE, TESTS, explanation="with json")])
+    sandbox_calls = {"count": 0}
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        sandbox_calls["count"] += 1
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    deps = Dependencies(llm=llm, settings=make_settings(), sandbox=sandbox, retriever=retriever)
+
+    result = run_task("write a function to parse json", deps, auto_approve=True)
+
+    # Status approved
+    assert result["status"] == "approved"
+    # History starts with retrieve -> generate -> run_tests -> finalize
+    history_nodes = [e["node"] for e in result["history"]]
+    assert history_nodes == ["retrieve", "generate", "run_tests", "finalize"]
+    # retrieved_docs contains the doc
+    assert result["retrieved_docs"][0]["id"] == "doc-json"
+    # Generate LLM call's human message contains [doc:doc-json]
+    gen_messages = llm.calls[0]
+    human_content = ""
+    for msg in gen_messages:
+        if hasattr(msg, "content") and isinstance(msg.content, str):
+            human_content = msg.content
+    assert "[doc:doc-json]" in human_content
+
+
+def test_graph_error_driven_reretrieval():
+    """Error-driven re-retrieval: sandbox fails, analyze_error produces
+    retrieval_queries, retrieve runs again (mode error), revise prompt
+    contains the new doc. Second failure with same error -> only ONE
+    error-mode retrieve (dedupe)."""
+    # Doc for task query
+    doc_task = make_doc("doc-task", "math module docs", score=0.8)
+    # Doc for error query "math sqroot"
+    doc_error = make_doc("doc-error", "math.sqrt square root", score=0.95)
+
+    retriever = FakeRetriever(
+        docs_by_query={
+            "write a function using math sqroot": [doc_task],
+            "math sqroot": [doc_error],
+        }
+    )
+
+    # Sandbox: first fails with AttributeError (math.sqroot), then passes
+    CODE_V1 = "import math\n\ndef f():\n    return math.sqroot(4)\n"
+    CODE_V2 = "import math\n\ndef f():\n    return math.sqrt(4)\n"
+    TESTS_MATH = "from solution import f\n\ndef test_f():\n    assert f() == 2.0\n"
+
+    llm = ScriptedLLM(
+        [
+            bundle_text(CODE_V1, TESTS_MATH, explanation="v1"),
+            bundle_text(CODE_V2, TESTS_MATH, explanation="v2"),
+        ]
+    )
+    sandbox_calls = {"count": 0}
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        sandbox_calls["count"] += 1
+        if sandbox_calls["count"] == 1:
+            return {
+                "passed": False,
+                "category": "runtime_error",
+                "exit_code": 1,
+                "timed_out": False,
+                "duration_s": 0.1,
+                "tests_total": 1,
+                "tests_failed": 1,
+                "failures": [
+                    {
+                        "test_name": "test_f",
+                        "error_type": "AttributeError",
+                        "message": "module 'math' has no attribute 'sqroot'",
+                        "traceback": (
+                            "solution.py:3: AttributeError: module 'math' has no attribute 'sqroot'"
+                        ),
+                    }
+                ],
+                "stdout": "",
+                "stderr": "",
+            }
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    deps = Dependencies(
+        llm=llm, settings=make_settings(max_retries=3), sandbox=sandbox, retriever=retriever
+    )
+
+    result = run_task("write a function using math sqroot", deps, auto_approve=True)
+
+    assert result["status"] == "approved"
+    # History: retrieve -> generate -> run_tests -> analyze_error
+    # -> retrieve -> revise -> run_tests -> finalize
+    history_nodes = [e["node"] for e in result["history"]]
+    assert history_nodes == [
+        "retrieve",
+        "generate",
+        "run_tests",
+        "analyze_error",
+        "retrieve",
+        "revise",
+        "run_tests",
+        "finalize",
+    ]
+
+    # Second retrieve event mode == "error"
+    retrieve_events = [e for e in result["history"] if e["node"] == "retrieve"]
+    assert len(retrieve_events) == 2
+    assert retrieve_events[0]["summary"]["mode"] == "task"
+    assert retrieve_events[1]["summary"]["mode"] == "error"
+    # Error queries include both suspect symbol and exception message
+    assert "math sqroot" in retrieve_events[1]["summary"]["queries"]
+    assert len(retrieve_events[1]["summary"]["queries"]) <= 3
+
+    # Revise LLM call (index 1 because no rewrite LLM call with default settings)
+    revise_messages = llm.calls[1]
+    human_content = ""
+    for msg in revise_messages:
+        if hasattr(msg, "content") and isinstance(msg.content, str):
+            human_content = msg.content
+    assert "[doc:doc-error]" in human_content
+
+    # Scenario 2: sandbox fails twice with SAME error -> only ONE error-mode retrieve
+    retriever2 = FakeRetriever(
+        docs_by_query={
+            "task": [make_doc("dt")],
+            "math sqroot": [make_doc("de")],
+        }
+    )
+    llm2 = ScriptedLLM(
+        [
+            bundle_text(CODE_V1, TESTS_MATH, explanation="v1"),
+            bundle_text(CODE_V1, TESTS_MATH, explanation="v1 again"),
+            bundle_text(CODE_V2, TESTS_MATH, explanation="v2"),
+        ]
+    )
+    sandbox_calls2 = {"count": 0}
+
+    def sandbox2(code, tests, timeout_s, mem_mb):
+        sandbox_calls2["count"] += 1
+        if sandbox_calls2["count"] <= 2:
+            return {
+                "passed": False,
+                "category": "runtime_error",
+                "exit_code": 1,
+                "timed_out": False,
+                "duration_s": 0.1,
+                "tests_total": 1,
+                "tests_failed": 1,
+                "failures": [
+                    {
+                        "test_name": "test_f",
+                        "error_type": "AttributeError",
+                        "message": "module 'math' has no attribute 'sqroot'",
+                        "traceback": (
+                            "solution.py:3: AttributeError: module 'math' has no attribute 'sqroot'"
+                        ),
+                    }
+                ],
+                "stdout": "",
+                "stderr": "",
+            }
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    deps2 = Dependencies(
+        llm=llm2, settings=make_settings(max_retries=3), sandbox=sandbox2, retriever=retriever2
+    )
+
+    result2 = run_task("task", deps2, auto_approve=True)
+
+    assert result2["status"] == "approved"
+    # Should have only 2 retrieve events (one task, one error)
+    retrieve_events2 = [e for e in result2["history"] if e["node"] == "retrieve"]
+    assert len(retrieve_events2) == 2
+    # The error-mode retrieve should only happen once despite two failures
+    error_retrieves = [e for e in retrieve_events2 if e["summary"]["mode"] == "error"]
+    assert len(error_retrieves) == 1
+
+
+def test_graph_rag_off_has_no_retrieve():
+    """RAG off: history has no retrieve; retrieval_queries == [] and retrieved_docs == []."""
+    llm = ScriptedLLM([bundle_text(CODE, TESTS, explanation="sum")])
+
+    def sandbox(code, tests, timeout_s, mem_mb):
+        return fake_sandbox_pass(code, tests, timeout_s, mem_mb)
+
+    # No retriever
+    deps = Dependencies(llm=llm, settings=make_settings(), sandbox=sandbox)
+
+    result = run_task("write a function add(a, b)", deps, auto_approve=True)
+
+    assert result["status"] == "approved"
+    history_nodes = [e["node"] for e in result["history"]]
+    assert "retrieve" not in history_nodes
+    assert result["retrieval_queries"] == []
+    assert result["retrieved_docs"] == []
+
+
+def test_build_retriever_fallbacks(tmp_path):
+    """build_retriever returns None for missing dir, empty store, or
+    returns Retriever for populated store. Always closes stores."""
+    from evalcode.graph import build_retriever
+    from evalcode.rag.embeddings import FakeEmbedder
+    from evalcode.rag.store import VectorStore
+
+    _ = make_settings(chroma_dir=str(tmp_path / "chroma"), collection_name="test")
+
+    # Case 1: missing dir -> None, dir NOT created
+    missing_dir = tmp_path / "missing"
+    settings_missing = make_settings(chroma_dir=str(missing_dir), collection_name="test")
+    retriever = build_retriever(settings_missing)
+    assert retriever is None
+    assert not missing_dir.exists()
+
+    # Case 2: empty store -> None
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    settings_empty = make_settings(chroma_dir=str(empty_dir), collection_name="test")
+    embedder = FakeEmbedder(dim=64)
+    store = VectorStore(empty_dir, "test", embedder)
+    store.close()  # empty store
+    retriever = build_retriever(settings_empty, embedder=embedder)
+    assert retriever is None
+    # Dir should still be deletable (store closed)
+    import shutil
+
+    shutil.rmtree(empty_dir)
+
+    # Case 3: store with 1 upserted DocChunk -> Retriever with top_k/min_score from settings
+    populated_dir = tmp_path / "populated"
+    populated_dir.mkdir()
+    settings_pop = make_settings(
+        chroma_dir=str(populated_dir),
+        collection_name="test",
+        retrieval_top_k=7,
+        retrieval_min_score=0.3,
+    )
+    embedder2 = FakeEmbedder(dim=64)
+    store2 = VectorStore(populated_dir, "test", embedder2)
+    from evalcode.rag.types import DocChunk
+
+    chunk = DocChunk(
+        id="c1",
+        text="test chunk",
+        metadata={"library": "json", "qualname": "json.loads", "import_path": "json"},
+    )
+    store2.upsert([chunk])
+    store2.close()
+    retriever = build_retriever(settings_pop, embedder=embedder2)
+    assert retriever is not None
+    assert retriever.top_k == 7
+    assert retriever.min_score == 0.3
+    retriever.store.close()
+    shutil.rmtree(populated_dir)

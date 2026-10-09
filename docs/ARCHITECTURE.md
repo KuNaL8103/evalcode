@@ -167,6 +167,8 @@ Task 7 decisions: a revision is human-driven iff `human_feedback` is non-empty, 
 
 Task 8 decisions: until Task 9 adds `human_review`, a passing run goes straight to `finalize`, so `auto_approve` has no effect yet; until Task 10 adds `retrieve`, `START -> generate` and `analyze_error -> revise` are direct edges, and `route_after_analysis`, `route_after_retrieve` and `route_after_review` do not exist yet. Routing uses `run_result['passed']` only. Nodes return only their new history events (the `history` reducer is `operator.add`). Real LLMClient construction lives only in `graph.default_dependencies`.
 
+Task 10 decisions: RAG on iff Dependencies.retriever is set (default_dependencies(rag=True) builds it from the local index and falls back to None with a warning when the index is missing/empty); retrieve runs before the first generate (raw task query by default, opt-in rewrite via QUERY_REWRITE_WITH_LLM with raw-task fallback) and after analyze_error only when needs_docs with queries not yet used; retrieval_queries accumulates and is the dedupe memory; retrieved_docs merged newest-first and capped by RETRIEVAL_MAX_DOCS; retrieval failure degrades to zero docs and never fails a run; human reject->revise does not re-retrieve; a checkpointed thread must be resumed with the same RAG topology; revise omits failure/diagnosis sections when a human rejects a passing solution.
+
 ## 4. RAG layer
 
 - **Ingestion**: (a) *introspection loader*: for each configured library walk the public namespace (`__all__` or non-underscore names) and emit one chunk per function/class/method: `import_path + signature + docstring (truncated)`; class chunks include a method index. (b) *text loader*: .md/.rst/.txt split by headings then paragraphs.

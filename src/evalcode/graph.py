@@ -1,15 +1,22 @@
-"""LangGraph wiring for the evalcode agent (Task 9).
+"""LangGraph wiring for the evalcode agent (Task 10).
 
 This module compiles the StateGraph with nodes: generate, run_tests,
-analyze_error, revise, human_review, finalize, fail. Routers use
-run_result["passed"] exclusively. No retrieve node yet (Task 10).
+analyze_error, revise, human_review, finalize, fail, and retrieve (RAG).
+Routers use run_result["passed"] exclusively.
+
+RAG is enabled iff Dependencies.retriever is set. default_dependencies(rag=True)
+builds a retriever from the local index and falls back to None with a warning
+when the index is missing/empty. A checkpointed thread must be resumed with the
+same RAG topology (retriever present/absent).
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -20,6 +27,7 @@ from evalcode.llm import TextLLM, build_llm_client
 from evalcode.nodes.analyze_error import make_analyze_error_node
 from evalcode.nodes.generate import make_generate_node
 from evalcode.nodes.human_review import human_review_node
+from evalcode.nodes.retrieve import make_retrieve_node
 from evalcode.nodes.revise import make_revise_node
 from evalcode.nodes.run_tests import make_run_tests_node
 from evalcode.nodes.terminal import fail_node, finalize_node
@@ -29,9 +37,12 @@ from evalcode.state import AgentState
 __all__ = [
     "Dependencies",
     "default_dependencies",
+    "build_retriever",
     "route_after_tests",
     "route_after_llm",
     "route_after_human",
+    "route_after_analysis",
+    "route_after_retrieve",
     "build_graph",
     "run_task",
     "stream_task",
@@ -43,22 +54,71 @@ __all__ = [
 
 RECURSION_LIMIT = 100
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class Dependencies:
-    """All external dependencies for the graph."""
+    """All external dependencies for the graph.
+
+    When ``retriever`` is None (default), the graph runs in RAG-off mode:
+    START -> generate -> run_tests -> ... (no retrieve node).
+    When set, the graph includes the retrieve node before generate and
+    after analyze_error (when needs_docs with fresh queries).
+    """
 
     llm: TextLLM
     settings: Settings
     sandbox: Callable[[str, str, float, int], dict] = run_in_sandbox
+    retriever: Any = None  # RetrieverLike | None; RAG on iff not None
 
 
-def default_dependencies(settings: Settings | None = None) -> Dependencies:
-    """Build real dependencies from settings (the only place that builds LLMClient)."""
+def default_dependencies(settings: Settings | None = None, *, rag: bool = True) -> Dependencies:
+    """Build real dependencies from settings.
+
+    If ``rag=True`` (default), builds a retriever from the local index.
+    If the index is missing or empty, logs a warning and returns None for
+    retriever (RAG-off mode). If ``rag=False``, never builds a retriever.
+    """
     if settings is None:
         settings = get_settings()
     llm = build_llm_client(settings)
-    return Dependencies(llm=llm, settings=settings, sandbox=run_in_sandbox)
+    retriever = build_retriever(settings) if rag else None
+    return Dependencies(llm=llm, settings=settings, sandbox=run_in_sandbox, retriever=retriever)
+
+
+def build_retriever(settings: Settings, *, embedder: Any = None) -> Any | None:
+    """Build a Retriever from settings, or return None with a warning.
+
+    - If the chroma_dir does not exist, logs a warning and returns None.
+    - If the store exists but has 0 chunks, closes it, logs a warning, and returns None.
+    - Otherwise returns a Retriever(store, settings.retrieval_top_k, settings.retrieval_min_score).
+
+    All heavy imports (chromadb, sentence-transformers) happen inside this function.
+    """
+    from evalcode.rag.embeddings import get_embedder
+    from evalcode.rag.retriever import Retriever
+    from evalcode.rag.store import VectorStore
+
+    chroma_dir = Path(settings.chroma_dir)
+    if not chroma_dir.exists():
+        logger.warning("Chroma directory %s does not exist; RAG disabled", chroma_dir)
+        return None
+
+    # Use provided embedder or create one from settings
+    if embedder is None:
+        embedder = get_embedder(settings)
+
+    store = VectorStore(chroma_dir, settings.collection_name, embedder)
+    try:
+        if store.count() == 0:
+            logger.warning("Chroma collection %s is empty; RAG disabled", settings.collection_name)
+            store.close()
+            return None
+        return Retriever(store, settings.retrieval_top_k, settings.retrieval_min_score)
+    except Exception:
+        store.close()
+        raise
 
 
 # --------------------------------------------------------------------------- #
@@ -117,6 +177,44 @@ def route_after_human(state: AgentState) -> str:
     return "fail"
 
 
+def route_after_analysis(state: AgentState) -> str:
+    """Route after analyze_error: retrieve | revise.
+
+    - If error_analysis.needs_docs is False -> revise (no docs needed).
+    - If error_analysis.retrieval_queries is empty -> revise (nothing to retrieve).
+    - If every query in retrieval_queries is already in state.retrieval_queries
+      (dedupe memory) -> revise (avoid repeat-retrieval loops).
+    - Otherwise -> retrieve.
+    """
+    error_analysis = state.get("error_analysis") or {}
+    needs_docs = error_analysis.get("needs_docs", False)
+    if not needs_docs:
+        return "revise"
+
+    queries = error_analysis.get("retrieval_queries") or []
+    if not queries:
+        return "revise"
+
+    prior_queries = state.get("retrieval_queries") or []
+    # Dedupe: if all queries have been used before, skip retrieval
+    if all(q in prior_queries for q in queries):
+        return "revise"
+
+    return "retrieve"
+
+
+def route_after_retrieve(state: AgentState) -> str:
+    """Route after retrieve: generate | revise.
+
+    - If state.code is empty/blank -> generate (first pass).
+    - Otherwise -> revise (error-driven re-retrieval).
+    """
+    code = state.get("code") or ""
+    if not code.strip():
+        return "generate"
+    return "revise"
+
+
 # --------------------------------------------------------------------------- #
 # Graph builder
 # --------------------------------------------------------------------------- #
@@ -131,10 +229,20 @@ def build_graph(
 
     Returns the compiled graph (type varies with LangGraph version; annotated
     as ``Any`` to avoid version-specific imports).
+
+    When deps.retriever is None, the topology is:
+      START -> generate -> run_tests -> (human_review|finalize|analyze_error|fail)
+      analyze_error -> revise -> run_tests ...
+
+    When deps.retriever is set, the topology adds a "retrieve" node:
+      START -> retrieve -> route_after_retrieve {generate, revise}
+      analyze_error -> route_after_analysis {retrieve, revise}
+
+    A checkpointed thread must be resumed with the same RAG on/off topology.
     """
     graph = StateGraph(AgentState)
 
-    # Nodes
+    # Nodes (always present)
     graph.add_node("generate", make_generate_node(deps.llm, deps.settings))
     graph.add_node("run_tests", make_run_tests_node(deps.settings, deps.sandbox))
     graph.add_node("analyze_error", make_analyze_error_node(deps.llm, deps.settings))
@@ -143,8 +251,28 @@ def build_graph(
     graph.add_node("finalize", finalize_node)
     graph.add_node("fail", fail_node)
 
+    # Conditionally add retrieve node
+    has_retriever = deps.retriever is not None
+    if has_retriever:
+        graph.add_node("retrieve", make_retrieve_node(deps.retriever, deps.llm, deps.settings))
+
     # Edges
-    graph.add_edge(START, "generate")
+    if has_retriever:
+        graph.add_edge(START, "retrieve")
+        graph.add_conditional_edges(
+            "retrieve",
+            route_after_retrieve,
+            {"generate": "generate", "revise": "revise"},
+        )
+        graph.add_conditional_edges(
+            "analyze_error",
+            route_after_analysis,
+            {"retrieve": "retrieve", "revise": "revise"},
+        )
+    else:
+        graph.add_edge(START, "generate")
+        graph.add_edge("analyze_error", "revise")
+
     graph.add_conditional_edges(
         "generate", route_after_llm, {"fail": "fail", "run_tests": "run_tests"}
     )
@@ -161,7 +289,6 @@ def build_graph(
             "fail": "fail",
         },
     )
-    graph.add_edge("analyze_error", "revise")
     graph.add_conditional_edges(
         "human_review",
         route_after_human,
@@ -169,8 +296,6 @@ def build_graph(
     )
     graph.add_edge("finalize", END)
     graph.add_edge("fail", END)
-
-    # Task 10 will insert retrieve before generate and after analyze_error
 
     return graph.compile(checkpointer=checkpointer)
 

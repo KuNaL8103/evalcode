@@ -16,7 +16,7 @@ def test_live_graph_basic():
         pytest.skip("GEMINI_API_KEY not configured (env or .env)")
 
     settings = Settings(max_retries=1)
-    deps = default_dependencies(settings)
+    deps = default_dependencies(settings, rag=False)
 
     result = run_task(
         "write a function add(a, b) that returns the sum of two numbers",

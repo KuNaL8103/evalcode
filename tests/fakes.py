@@ -16,6 +16,7 @@ from langchain_core.messages import BaseMessage
 from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
 from evalcode.llm import LLMResponse
+from evalcode.rag.types import RetrievedDoc
 from evalcode.state import TokenUsage
 
 # The OpenAI chat-completions endpoint, used only for stub httpx2.Request objects.
@@ -147,3 +148,74 @@ def bundle_text(
     if docs_used:
         parts.append(f"<docs_used>\n{', '.join(docs_used)}\n</docs_used>")
     return "\n".join(parts)
+
+
+# --------------------------------------------------------------------------- #
+# Retriever fake (Task 10)
+# --------------------------------------------------------------------------- #
+
+
+def make_doc(
+    id: str,
+    text: str = "doc text",
+    score: float = 0.9,
+    library: str = "json",
+    qualname: str = "json.loads",
+    import_path: str = "json",
+) -> RetrievedDoc:
+    """Create a RetrievedDoc for testing."""
+    return RetrievedDoc(
+        id=id,
+        text=text,
+        score=score,
+        library=library,
+        qualname=qualname,
+        import_path=import_path,
+    )
+
+
+class FakeRetriever:
+    """Fake retriever for unit tests.
+
+    Args:
+        docs_by_query: Mapping from query string to list of docs. When a query
+            is not found, falls back to ``default``.
+        default: Default docs to return for any query not in ``docs_by_query``.
+        raises: If set, this exception is raised on every ``retrieve`` call.
+    """
+
+    def __init__(
+        self,
+        docs_by_query: dict[str, list[RetrievedDoc]] | None = None,
+        default: list[RetrievedDoc] | None = None,
+        raises: Exception | None = None,
+    ) -> None:
+        self.docs_by_query = docs_by_query or {}
+        self.default = default or []
+        self.raises = raises
+        self.calls: list[list[str]] = []
+
+    def retrieve(
+        self, queries: list[str], k: int | None = None, library: str | None = None
+    ) -> list[RetrievedDoc]:
+        self.calls.append(list(queries))
+        if self.raises:
+            raise self.raises
+
+        # Merge docs for all queries, keeping max score per id
+        best: dict[str, float] = {}
+        by_id: dict[str, RetrievedDoc] = {}
+        for query in queries:
+            docs = self.docs_by_query.get(query, self.default)
+            for doc in docs:
+                prev = best.get(doc["id"])
+                if prev is None or doc["score"] > prev:
+                    best[doc["id"]] = doc["score"]
+                    by_id[doc["id"]] = doc
+
+        # Sort by score descending
+        result = list(by_id.values())
+        result.sort(key=lambda d: d["score"], reverse=True)
+        if k is not None:
+            result = result[:k]
+        return result

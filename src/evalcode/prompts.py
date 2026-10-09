@@ -25,6 +25,8 @@ __all__ = [
     "REVISE_SYSTEM",
     "REVISE_INSTRUCTION",
     "build_revise_messages",
+    "REWRITE_SYSTEM",
+    "build_rewrite_messages",
 ]
 
 GENERATE_SYSTEM = """\
@@ -240,38 +242,48 @@ def build_revise_messages(state: AgentState, *, context_max_chars: int = 6000) -
     else:
         parts.append(f"Current test_solution.py:\n{tests}")
 
-    # Failure report
-    parts.append(f"Category: {category}")
-    if failures:
-        test_names = [f.get("test_name", "unknown") for f in failures[:5]]
-        parts.append(f"Failing tests: {', '.join(test_names)}")
+    # Human feedback present AND run_result.passed is True -> human rejected a passing solution
+    human_rejected_passing = human_feedback.strip() and run_result.get("passed") is True
 
-    # Exception line from extract_exception (never uses failures[].error_type)
-    exc_type, exc_msg = extract_exception(run_result)
-    if exc_type or exc_msg:
-        parts.append(f"Exception: {exc_type}: {exc_msg}"[:300])
+    if not human_rejected_passing:
+        # Failure report (omitted when human rejected a passing solution)
+        parts.append(f"Category: {category}")
+        if failures:
+            test_names = [f.get("test_name", "unknown") for f in failures[:5]]
+            parts.append(f"Failing tests: {', '.join(test_names)}")
 
-    # Traceback tail (from first failure if available)
-    if failures:
-        tb = failures[0].get("traceback", "")
-        if tb:
-            parts.append(f"Traceback (tail):\n{tb[-1500:]}")
-    if stdout:
-        parts.append(f"Stdout (tail):\n{stdout[-500:]}")
-    if stderr:
-        parts.append(f"Stderr (tail):\n{stderr[-500:]}")
+        # Exception line from extract_exception (never uses failures[].error_type)
+        exc_type, exc_msg = extract_exception(run_result)
+        if exc_type or exc_msg:
+            parts.append(f"Exception: {exc_type}: {exc_msg}"[:300])
 
-    # Diagnosis
-    root_cause = error_analysis.get("root_cause", "")
-    fix_plan = error_analysis.get("fix_plan", "")
-    fault = error_analysis.get("fault", "unknown")
-    suspects = error_analysis.get("suspect_symbols", [])
+        # Traceback tail (from first failure if available)
+        if failures:
+            tb = failures[0].get("traceback", "")
+            if tb:
+                parts.append(f"Traceback (tail):\n{tb[-1500:]}")
+        if stdout:
+            parts.append(f"Stdout (tail):\n{stdout[-500:]}")
+        if stderr:
+            parts.append(f"Stderr (tail):\n{stderr[-500:]}")
 
-    parts.append(
-        f"Diagnosis:\n  root_cause: {root_cause}\n  fix_plan: {fix_plan}\n  fault: {fault}"
-    )
-    if suspects:
-        parts.append(f"  suspect_symbols: {', '.join(suspects)}")
+        # Diagnosis (omitted when human rejected a passing solution)
+        root_cause = error_analysis.get("root_cause", "")
+        fix_plan = error_analysis.get("fix_plan", "")
+        fault = error_analysis.get("fault", "unknown")
+        suspects = error_analysis.get("suspect_symbols", [])
+
+        parts.append(
+            f"Diagnosis:\n  root_cause: {root_cause}\n  fix_plan: {fix_plan}\n  fault: {fault}"
+        )
+        if suspects:
+            parts.append(f"  suspect_symbols: {', '.join(suspects)}")
+    else:
+        # Human rejected a PASSING solution: omit failure report and diagnosis
+        parts.append(
+            "The tests currently PASS; a human reviewer rejected the solution. "
+            "Address the feedback below."
+        )
 
     # Human feedback
     if human_feedback.strip():
@@ -300,3 +312,35 @@ def build_revise_messages(state: AgentState, *, context_max_chars: int = 6000) -
     parts.append(REVISE_INSTRUCTION)
 
     return [SystemMessage(content=REVISE_SYSTEM), HumanMessage(content="\n\n".join(parts))]
+
+
+# --------------------------------------------------------------------------- #
+# Query rewrite prompt (Task 10)
+# --------------------------------------------------------------------------- #
+
+REWRITE_SYSTEM = """\
+You are a query rewriter for a Python documentation search engine. Given a
+coding task, produce 2-4 short, API-oriented search queries that will find
+the most relevant standard-library documentation.
+
+REPLY WITH EXACTLY THIS TAGGED BLOCK AND NOTHING ELSE:
+<queries>
+one query per line
+</queries>
+
+Rules:
+- Each query <= 80 characters.
+- Focus on module names, function names, class names, and method names.
+- No natural language questions; use keyword phrases like "json loads" or
+  "pathlib Path mkdir".
+- Maximum 4 queries.
+- Do NOT include markdown fences or any text outside the <queries> block.
+"""
+
+
+def build_rewrite_messages(task: str) -> list[BaseMessage]:
+    """Build messages for the query rewrite LLM call."""
+    return [
+        SystemMessage(content=REWRITE_SYSTEM),
+        HumanMessage(content=f"Task:\n{task}"),
+    ]
