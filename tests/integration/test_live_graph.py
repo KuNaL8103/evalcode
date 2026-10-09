@@ -18,7 +18,11 @@ def test_live_graph_basic():
     settings = Settings(max_retries=1)
     deps = default_dependencies(settings)
 
-    result = run_task("write a function add(a, b) that returns the sum of two numbers", deps)
+    result = run_task(
+        "write a function add(a, b) that returns the sum of two numbers",
+        deps,
+        auto_approve=True,
+    )
 
     assert result["status"] in {"approved", "failed"}
     if result["status"] == "failed":
