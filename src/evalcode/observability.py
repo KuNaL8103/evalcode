@@ -24,16 +24,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from langgraph.errors import GraphInterrupt
+
 from evalcode.config import Settings
 from evalcode.state import AgentState, merge_usage, utc_now_iso
-
-try:
-    from langgraph.errors import GraphInterrupt
-except Exception:  # pragma: no cover - langgraph may not be installed in all envs
-
-    class GraphInterrupt(Exception):
-        pass
-
 
 __all__ = [
     "RunLogger",
@@ -161,20 +155,17 @@ class RunLogger:
             return []
         return events
 
-    def _clear_events(self) -> None:
-        """Clear the events file (for test isolation)."""
-        try:
-            if self.events_path.exists():
-                self.events_path.unlink()
-        except OSError:
-            pass
+    @property
+    def secrets(self) -> tuple[str, ...]:
+        """Read-only access to the secrets tuple for redaction."""
+        return self._secrets
 
     def write_summary(
         self, state: AgentState, *, extra: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Build and write summary.json; return the summary dict."""
         events = self.read_events()
-        summary = build_summary(self.run_id, events, state)
+        summary = build_summary(self.run_id, events, state, secrets=self._secrets)
         if extra:
             summary.update(extra)
         summary = redact(summary, self._secrets)
@@ -187,7 +178,13 @@ class RunLogger:
         return summary
 
 
-def build_summary(run_id: str, events: list[dict[str, Any]], state: AgentState) -> dict[str, Any]:
+def build_summary(
+    run_id: str,
+    events: list[dict[str, Any]],
+    state: AgentState,
+    *,
+    secrets: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Pure function: build the final run summary from events and state."""
     if not events:
         started_ts = None
@@ -237,10 +234,9 @@ def build_summary(run_id: str, events: list[dict[str, Any]], state: AgentState) 
     interrupt = state.get("__interrupt__")
     status = "awaiting_review" if interrupt else state.get("status")
 
-    # Failure reason truncated to 300 chars
+    # Failure reason: redact BEFORE truncating
     failure_reason = state.get("failure_reason")
-    if isinstance(failure_reason, str) and len(failure_reason) > 300:
-        failure_reason = failure_reason[:300]
+    failure_reason = redact(failure_reason, secrets, max_str=300)
 
     # Final category from run_result
     run_result = state.get("run_result") or {}
@@ -427,9 +423,12 @@ def _log_node_event(
     # Usage from update
     usage = update.get("token_usage") or {}
 
-    # Cumulative usage: merge state + update
+    # Cumulative usage: merge state + update for ok/failed; state only for interrupted/error
     state_usage = state.get("token_usage") or {}
-    cumulative_usage = merge_usage(state_usage, usage) if outcome == "ok" else state_usage
+    if outcome in ("ok", "failed"):
+        cumulative_usage = merge_usage(state_usage, usage)
+    else:
+        cumulative_usage = state_usage
 
     # LLM client stats delta
     llm_client: dict[str, Any] = {}
@@ -464,14 +463,9 @@ def _log_node_event(
 
     if outcome == "failed":
         failure_reason = update.get("failure_reason")
-        if isinstance(failure_reason, str) and len(failure_reason) > 300:
-            failure_reason = failure_reason[:300]
-        event["failure_reason"] = failure_reason
+        event["failure_reason"] = redact(failure_reason, logger.secrets, max_str=300)
     elif outcome == "error" and error is not None:
         event["error"] = type(error).__name__
-        error_msg = str(error)
-        if len(error_msg) > 300:
-            error_msg = error_msg[:300]
-        event["error_message"] = error_msg
+        event["error_message"] = redact(str(error), logger.secrets, max_str=300)
 
     logger.log_event(event)

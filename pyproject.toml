@@ -36,6 +36,9 @@ corpus = [
     "requests",
 ]
 
+[project.scripts]
+evalcode = "evalcode.cli:app"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/evalcode"]
 

@@ -60,6 +60,10 @@ __all__ = [
     "initial_state",
     "pending_review",
     "resume_task",
+    "get_task_state",
+    "stream_resume_task",
+    "close_dependencies",
+    "rag_enabled_in",
     "RECURSION_LIMIT",
 ]
 
@@ -517,3 +521,111 @@ def resume_task(
     if deps.logger is not None:
         deps.logger.write_summary(result)
     return result
+
+
+def get_task_state(
+    task_id: str,
+    settings: Settings,
+    *,
+    checkpointer: Any,
+) -> dict[str, Any] | None:
+    """Read the checkpointed state for a task without executing the graph.
+
+    Compiles a graph with a private _NoLLM (raises on any LLM call) and the
+    given checkpointer, then calls .get_state({"configurable": {"thread_id": task_id}}).
+    If the snapshot has no values, returns None. Otherwise returns a dict copy
+    of snapshot.values with ``__interrupt__`` populated from the snapshot's
+    tasks' interrupts (using the PregelTask.interrupts field) so that
+    pending_review(state) and build_summary work unchanged.
+
+    Never mutates the checkpoint.
+    """
+    from langgraph.types import StateSnapshot
+
+    # Private no-op LLM that raises on any call
+    class _NoLLM:
+        def invoke_text(self, *args: Any, **kwargs: Any) -> str:
+            raise RuntimeError("No LLM available in get_task_state (read-only)")
+
+        def reset_budget(self) -> None:
+            pass
+
+    deps = Dependencies(
+        llm=_NoLLM(),
+        settings=settings,
+        sandbox=run_in_sandbox,
+        retriever=None,
+        logger=None,
+    )
+    graph = build_graph(deps, checkpointer=checkpointer)
+    snapshot: StateSnapshot = graph.get_state({"configurable": {"thread_id": task_id}})
+
+    if not snapshot.values:
+        return None
+
+    state = dict(snapshot.values)
+    # Collect interrupts from snapshot.tasks (PregelTask has 'interrupts' field)
+    all_interrupts = tuple(
+        i for t in snapshot.tasks if hasattr(t, "interrupts") for i in t.interrupts
+    )
+    if all_interrupts:
+        state["__interrupt__"] = all_interrupts
+    return state
+
+
+def stream_resume_task(
+    task_id: str,
+    response: dict[str, Any],
+    deps: Dependencies,
+    *,
+    checkpointer: Any,
+) -> Iterator[tuple[str, Any]]:
+    """Stream a resume after human review, yielding (node, update) pairs.
+
+    Builds the graph exactly like resume_task, but uses graph.stream with
+    Command(resume=response) and stream_mode="updates". Does NOT reset the
+    LLM budget and does NOT write a summary (the CLI writes it).
+
+    Args:
+        task_id: The thread_id to resume.
+        response: The human decision response dict.
+        deps: Dependencies (with fresh LLM, logger, etc.).
+        checkpointer: The same checkpointer used for the original run.
+
+    Yields:
+        (node_name, update_dict) pairs from the stream.
+    """
+    graph = build_graph(deps, checkpointer=checkpointer)
+    run_id = deps.logger.run_id if deps.logger else None
+    config = build_run_config(task_id, run_id=run_id, recursion_limit=RECURSION_LIMIT)
+    for chunk in graph.stream(Command(resume=response), config=config, stream_mode="updates"):
+        yield from chunk.items()
+
+
+def close_dependencies(deps: Dependencies) -> None:
+    """Close the retriever's Chroma store if present.
+
+    Catches and logs any exception at WARNING level; never raises.
+    Safe to call multiple times and with retriever=None.
+    """
+    store = getattr(getattr(deps, "retriever", None), "store", None)
+    close_fn = getattr(store, "close", None)
+    if callable(close_fn):
+        try:
+            close_fn()
+        except Exception as e:
+            logger.warning("Failed to close retriever store: %s", e)
+
+
+def rag_enabled_in(state: AgentState) -> bool:
+    """Return True iff the state indicates RAG was enabled (history[0].node == 'retrieve').
+
+    The retrieve node always runs first when RAG is on. Pure function, no side effects.
+    """
+    history = state.get("history") or []
+    if not history:
+        return False
+    first = history[0]
+    if isinstance(first, dict):
+        return first.get("node") == "retrieve"
+    return False

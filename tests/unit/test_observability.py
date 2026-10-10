@@ -303,21 +303,28 @@ def test_traced_node_event_fields():
             "history": [],
         }
 
+        returned_dict: dict[str, Any] | None = None
+
         def fake_node(s: AgentState) -> dict[str, Any]:
             # Call the LLM to increment stats
             llm.invoke_text([], purpose="test")
-            return {
+            nonlocal returned_dict
+            returned_dict = {
                 "history": [
                     {"node": "generate", "attempt": 1, "ts": utc_now_iso(), "summary": {"ok": True}}
                 ],
                 "token_usage": {"llm_calls": 1},
+                "code": "SECRET_CODE_BODY_123",
+                "tests": "SECRET_TESTS_BODY_456",
+                "explanation": "SECRET_EXPLANATION_789",
             }
+            return returned_dict
 
         wrapped = traced_node("generate", fake_node, logger, llm_stats=llm)
         update = wrapped(state)
 
         # Returned update is the SAME object
-        assert update is not None
+        assert update is returned_dict
 
         # Input state unchanged
         assert state.get("attempt") == 1
@@ -344,21 +351,38 @@ def test_traced_node_event_fields():
         assert e["llm_client"]["api_retries"] == 0
         assert e["llm_client"]["wait_s"] == 0.5
 
-        # No code/tests text in logged line
+        # No code/tests/explanation text in logged line (redacted)
         event_str = json.dumps(e)
-        assert "pass" not in event_str.lower() or "assertion" not in event_str.lower()
+        assert "SECRET_CODE_BODY_123" not in event_str
+        assert "SECRET_TESTS_BODY_456" not in event_str
+        assert "SECRET_EXPLANATION_789" not in event_str
 
-        # Test failed outcome
+        # Test failed outcome - cumulative_usage includes node's usage (A3)
         def failing_node(s: AgentState) -> dict[str, Any]:
-            return {"status": "failed", "failure_reason": "oops", "history": [], "token_usage": {}}
+            return {
+                "status": "failed",
+                "failure_reason": "oops",
+                "history": [],
+                "token_usage": {"llm_calls": 1},
+            }
 
         logger2 = RunLogger(tmpdir, run_id="test-run-2")
+        # State has token_usage {"llm_calls": 1}, node returns token_usage {"llm_calls": 1}
+        # cumulative_usage should be merge = {"llm_calls": 2}
+        state2: AgentState = {
+            "task_id": "task-2",
+            "task": "test",
+            "attempt": 1,
+            "token_usage": {"llm_calls": 1},
+            "history": [],
+        }
         wrapped2 = traced_node("revise", failing_node, logger2, llm_stats=llm)
-        wrapped2(state)
+        wrapped2(state2)
 
         events2 = logger2.read_events()
         assert events2[0]["outcome"] == "failed"
         assert events2[0]["failure_reason"] == "oops"
+        assert events2[0]["cumulative_usage"] == {"llm_calls": 2}
 
 
 def test_traced_node_error_and_interrupt():
@@ -410,6 +434,23 @@ def test_traced_node_error_and_interrupt():
         wrapped3({})
         events3 = logger3.read_events()
         assert len(events3) == 1
+
+        # Test long error message where 300-char cut falls inside a key (A4)
+        logger4 = RunLogger(tmpdir, run_id="test-run-4")
+        # Build a fake key at runtime (not a literal)
+        long_key = "AIza" + "x" * 35  # 39 chars
+        long_msg = "x" * 290 + long_key  # 290 + 39 = 329, cut at 300 falls inside key
+
+        def long_error_node(s: AgentState) -> dict[str, Any]:
+            raise RuntimeError(long_msg)
+
+        wrapped4 = traced_node("generate", long_error_node, logger4, llm_stats=None)
+        with pytest.raises(RuntimeError):
+            wrapped4({})
+        events4 = logger4.read_events()
+        assert len(events4) == 1
+        # The first 10 chars of the key should not appear in the redacted error_message
+        assert long_key[:10] not in events4[0]["error_message"]
 
 
 def test_build_summary_and_run_config():
@@ -480,6 +521,25 @@ def test_build_summary_and_run_config():
     assert summary3["llm_client_totals"] == {"calls": 0, "api_retries": 0, "wait_s": 0.0}
     assert summary3["rag"] is False
     assert summary3["retrieved_doc_ids"] == []
+
+    # Test secrets redaction in build_summary (A4): failure_reason with key straddling 300-char cut
+    long_key = "AIza" + "x" * 35  # 39 chars
+    failure_with_key = "x" * 290 + long_key  # 329 chars, cut falls inside key
+    state_with_failure: AgentState = {
+        "task_id": "task-fail",
+        "status": "failed",
+        "failure_reason": failure_with_key,
+        "attempt": 1,
+        "retries_used": 0,
+        "human_rounds": 0,
+        "token_usage": {},
+        "history": [],
+    }
+    summary4 = build_summary("run-456", [], state_with_failure, secrets=(long_key,))
+    # First 10 chars of key should not appear
+    assert long_key[:10] not in summary4["failure_reason"]
+    # Length should be <= 300 + len("...[truncated]") = 300 + 13 = 313
+    assert len(summary4["failure_reason"]) <= 300 + len("...[truncated]")
 
     # build_run_config
     cfg = build_run_config("task-1", run_id="run-1", recursion_limit=50)
