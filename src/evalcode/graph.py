@@ -1,4 +1,4 @@
-"""LangGraph wiring for the evalcode agent (Task 10).
+"""LangGraph wiring for the evalcode agent (Task 11).
 
 This module compiles the StateGraph with nodes: generate, run_tests,
 analyze_error, revise, human_review, finalize, fail, and retrieve (RAG).
@@ -8,6 +8,11 @@ RAG is enabled iff Dependencies.retriever is set. default_dependencies(rag=True)
 builds a retriever from the local index and falls back to None with a warning
 when the index is missing/empty. A checkpointed thread must be resumed with the
 same RAG topology (retriever present/absent).
+
+Observability: when Dependencies.logger is set (via default_dependencies(observe=True)),
+every node is wrapped with traced_node for structured event logging, and
+configure_langsmith is applied. run_task/resume_task write summary.json;
+stream_task does not.
 """
 
 from __future__ import annotations
@@ -31,6 +36,12 @@ from evalcode.nodes.retrieve import make_retrieve_node
 from evalcode.nodes.revise import make_revise_node
 from evalcode.nodes.run_tests import make_run_tests_node
 from evalcode.nodes.terminal import fail_node, finalize_node
+from evalcode.observability import (
+    build_logger,
+    build_run_config,
+    configure_langsmith,
+    traced_node,
+)
 from evalcode.sandbox.runner import run_in_sandbox
 from evalcode.state import AgentState
 
@@ -65,26 +76,51 @@ class Dependencies:
     START -> generate -> run_tests -> ... (no retrieve node).
     When set, the graph includes the retrieve node before generate and
     after analyze_error (when needs_docs with fresh queries).
+
+    When ``logger`` is set (RunLogger), structured event logging is enabled
+    for all nodes via traced_node. default_dependencies(observe=True) also
+    configures LangSmith if settings.langsmith_tracing and a key are set.
     """
 
     llm: TextLLM
     settings: Settings
     sandbox: Callable[[str, str, float, int], dict] = run_in_sandbox
     retriever: Any = None  # RetrieverLike | None; RAG on iff not None
+    logger: Any = None  # RunLogger | None; observability on iff not None
 
 
-def default_dependencies(settings: Settings | None = None, *, rag: bool = True) -> Dependencies:
+def default_dependencies(
+    settings: Settings | None = None,
+    *,
+    rag: bool = True,
+    observe: bool = False,
+    run_id: str | None = None,
+) -> Dependencies:
     """Build real dependencies from settings.
 
     If ``rag=True`` (default), builds a retriever from the local index.
     If the index is missing or empty, logs a warning and returns None for
     retriever (RAG-off mode). If ``rag=False``, never builds a retriever.
+
+    If ``observe=True``, configures LangSmith (if tracing requested and key exists)
+    and creates a RunLogger for structured event logging. If ``observe=False``,
+    neither LangSmith nor the filesystem is touched.
     """
     if settings is None:
         settings = get_settings()
     llm = build_llm_client(settings)
     retriever = build_retriever(settings) if rag else None
-    return Dependencies(llm=llm, settings=settings, sandbox=run_in_sandbox, retriever=retriever)
+    logger = None
+    if observe:
+        configure_langsmith(settings)
+        logger = build_logger(settings, run_id)
+    return Dependencies(
+        llm=llm,
+        settings=settings,
+        sandbox=run_in_sandbox,
+        retriever=retriever,
+        logger=logger,
+    )
 
 
 def build_retriever(settings: Settings, *, embedder: Any = None) -> Any | None:
@@ -239,22 +275,39 @@ def build_graph(
       analyze_error -> route_after_analysis {retrieve, revise}
 
     A checkpointed thread must be resumed with the same RAG on/off topology.
+
+    When deps.logger is set, every node is wrapped with traced_node for
+    structured event logging (per-node usage, cumulative usage, LLM stats deltas).
     """
     graph = StateGraph(AgentState)
 
+    # Optional node wrapper for observability
+    def _wrap(name: str, fn: Any) -> Any:
+        if deps.logger is not None:
+            return traced_node(name, fn, deps.logger, llm_stats=deps.llm)
+        return fn
+
     # Nodes (always present)
-    graph.add_node("generate", make_generate_node(deps.llm, deps.settings))
-    graph.add_node("run_tests", make_run_tests_node(deps.settings, deps.sandbox))
-    graph.add_node("analyze_error", make_analyze_error_node(deps.llm, deps.settings))
-    graph.add_node("revise", make_revise_node(deps.llm, deps.settings))
-    graph.add_node("human_review", human_review_node)
-    graph.add_node("finalize", finalize_node)
-    graph.add_node("fail", fail_node)
+    graph.add_node("generate", _wrap("generate", make_generate_node(deps.llm, deps.settings)))
+    graph.add_node(
+        "run_tests", _wrap("run_tests", make_run_tests_node(deps.settings, deps.sandbox))
+    )
+    graph.add_node(
+        "analyze_error",
+        _wrap("analyze_error", make_analyze_error_node(deps.llm, deps.settings)),
+    )
+    graph.add_node("revise", _wrap("revise", make_revise_node(deps.llm, deps.settings)))
+    graph.add_node("human_review", _wrap("human_review", human_review_node))
+    graph.add_node("finalize", _wrap("finalize", finalize_node))
+    graph.add_node("fail", _wrap("fail", fail_node))
 
     # Conditionally add retrieve node
     has_retriever = deps.retriever is not None
     if has_retriever:
-        graph.add_node("retrieve", make_retrieve_node(deps.retriever, deps.llm, deps.settings))
+        graph.add_node(
+            "retrieve",
+            _wrap("retrieve", make_retrieve_node(deps.retriever, deps.llm, deps.settings)),
+        )
 
     # Edges
     if has_retriever:
@@ -361,9 +414,18 @@ def run_task(
     **must** be provided; otherwise a ``ValueError`` is raised before any
     graph execution. The returned state may contain an ``"__interrupt__"`` key
     if the graph paused for human review.
+
+    If deps.logger is set, writes summary.json after completion (including
+    when paused at human_review with status "awaiting_review").
     """
     if auto_approve is False and checkpointer is None:
         raise ValueError("auto_approve=False requires a checkpointer")
+
+    # Reset per-run LLM call budget for new runs (not resumes)
+    reset = getattr(deps.llm, "reset_budget", None)
+    if callable(reset):
+        reset()
+
     graph = build_graph(deps, checkpointer=checkpointer)
     init = initial_state(
         task=task,
@@ -372,8 +434,12 @@ def run_task(
         provided_tests=provided_tests,
         auto_approve=auto_approve,
     )
-    config = {"recursion_limit": RECURSION_LIMIT, "configurable": {"thread_id": init["task_id"]}}
+    run_id = deps.logger.run_id if deps.logger else None
+    config = build_run_config(init["task_id"], run_id=run_id, recursion_limit=RECURSION_LIMIT)
     result = graph.invoke(init, config=config)
+
+    if deps.logger is not None:
+        deps.logger.write_summary(result)
     return result
 
 
@@ -391,6 +457,9 @@ def stream_task(
     When ``auto_approve=False``, a ``checkpointer`` **must** be provided.
     The stream may yield a ``("__interrupt__", payload)`` chunk when the graph
     pauses for human review.
+
+    Events are logged via traced_node if deps.logger is set, but this function
+    does NOT write summary.json (the Task 12 CLI will call write_summary).
     """
     if auto_approve is False and checkpointer is None:
         raise ValueError("auto_approve=False requires a checkpointer")
@@ -402,7 +471,8 @@ def stream_task(
         provided_tests=provided_tests,
         auto_approve=auto_approve,
     )
-    config = {"recursion_limit": RECURSION_LIMIT, "configurable": {"thread_id": init["task_id"]}}
+    run_id = deps.logger.run_id if deps.logger else None
+    config = build_run_config(init["task_id"], run_id=run_id, recursion_limit=RECURSION_LIMIT)
     for chunk in graph.stream(init, config=config, stream_mode="updates"):
         yield from chunk.items()
 
@@ -435,8 +505,15 @@ def resume_task(
     then invokes it with ``Command(resume=response)``. Returns the resulting
     state (which may again contain ``"__interrupt__"`` if another review is
     needed).
+
+    Does NOT reset the LLM per-run call budget (a resume continues the same run).
+    If deps.logger is set, writes summary.json after completion.
     """
     graph = build_graph(deps, checkpointer=checkpointer)
-    config = {"recursion_limit": RECURSION_LIMIT, "configurable": {"thread_id": task_id}}
+    run_id = deps.logger.run_id if deps.logger else None
+    config = build_run_config(task_id, run_id=run_id, recursion_limit=RECURSION_LIMIT)
     result = graph.invoke(Command(resume=response), config=config)
+
+    if deps.logger is not None:
+        deps.logger.write_summary(result)
     return result

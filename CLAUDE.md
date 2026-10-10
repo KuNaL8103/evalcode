@@ -99,15 +99,16 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 8: graph wiring - `graph.py` (`Dependencies`, `build_graph`, routers, `run_task`/`stream_task`), `nodes/terminal.py`; run_tests history fix; 10 new tests + 1 live (98).
 - Task 9: human review - `nodes/human_review.py` (interrupt + `apply_human_decision`), `persistence.py` (`open_checkpointer`), `resume_task`/`pending_review`, reject feedback in revise; 8 new tests (106).
 - Task 10: RAG integration - `nodes/retrieve.py` (task + error-driven retrieval, opt-in rewrite), `build_retriever`/`Dependencies.retriever` (RAG-off mode), `route_after_analysis`/`route_after_retrieve`, revise human-path prompt fix; 10 new tests + 1 live/slow (116).
+- Task 11: observability - `observability.py` (`RunLogger`, `traced_node`, `redact`, `configure_langsmith`, `build_run_config`, `build_summary`), `Dependencies.logger`/`default_dependencies(observe=)`, per-run LLM budget reset, retrieve `ts` fix; 8 new tests (124).
 
-### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
+### Latest milestone (Task 11 — observability)
 - RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.
 - Timeout evidence (A7): `elapsed <= 6.0` (actual 3.45s); pid_file 2 PIDs (e.g. 56216, 65984); both `pid_alive` false (Windows `tasklist`).
 - Provider: `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; live: PASS, first reply followed tagged format, tokens used.
 - Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; set `GEMINI_API_KEY` in `.env` (git-ignored).
-- Tests: 116 passed; ruff clean.
+- Tests: 124 passed; ruff clean.
 - Sandbox writes `solution.py` and `test_solution.py` separately; generated tests import via `from solution import ...` (see prompts.py).
 - Sandbox invariant (Task 7c): `run_result['passed']` is True iff category is `pass` and exit_code is 0; collection errors (pytest exit 2) come back passed=False with a mapped category. Task 8 routes on `run_result['passed']`.
 
 ### Not started
-Task 11 onward.
+Task 12 onward.

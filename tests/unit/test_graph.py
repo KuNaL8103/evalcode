@@ -893,8 +893,8 @@ def test_topology_rag_on_and_off():
     nodes_on = set(graph_on.get_graph().nodes.keys())
     assert expected_base.issubset(nodes_on)
     assert "retrieve" in nodes_on
-    # Graph also includes __start__ and __end__ nodes
-    assert len(nodes_on) >= len(expected_base) + 1  # base + retrieve + internal nodes
+    # Graph also includes __start__ and __end__ nodes; RAG on adds exactly one node (retrieve)
+    assert len(nodes_on) == len(nodes_off) + 1
 
 
 def test_graph_rag_grounds_generate():
@@ -1012,9 +1012,11 @@ def test_graph_error_driven_reretrieval():
     assert len(retrieve_events) == 2
     assert retrieve_events[0]["summary"]["mode"] == "task"
     assert retrieve_events[1]["summary"]["mode"] == "error"
-    # Error queries include both suspect symbol and exception message
-    assert "math sqroot" in retrieve_events[1]["summary"]["queries"]
-    assert len(retrieve_events[1]["summary"]["queries"]) <= 3
+    # Error queries include both suspect symbol and exception message (exact list)
+    assert retrieve_events[1]["summary"]["queries"] == [
+        "math sqroot",
+        "module 'math' has no attribute 'sqroot'",
+    ]
 
     # Revise LLM call (index 1 because no rewrite LLM call with default settings)
     revise_messages = llm.calls[1]
@@ -1106,8 +1108,6 @@ def test_build_retriever_fallbacks(tmp_path):
     from evalcode.graph import build_retriever
     from evalcode.rag.embeddings import FakeEmbedder
     from evalcode.rag.store import VectorStore
-
-    _ = make_settings(chroma_dir=str(tmp_path / "chroma"), collection_name="test")
 
     # Case 1: missing dir -> None, dir NOT created
     missing_dir = tmp_path / "missing"

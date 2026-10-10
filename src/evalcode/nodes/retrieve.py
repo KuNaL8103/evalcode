@@ -15,15 +15,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-
 from evalcode.config import Settings
 from evalcode.llm import TextLLM
 from evalcode.parsing import parse_tagged
+from evalcode.prompts import build_rewrite_messages
 from evalcode.rag.types import RetrievedDoc
-from evalcode.state import AgentState
+from evalcode.state import AgentState, utc_now_iso
 
-__all__ = ["RetrieverLike", "make_retrieve_node", "REWRITE_SYSTEM", "build_rewrite_messages"]
+__all__ = ["RetrieverLike", "make_retrieve_node"]
 
 logger = logging.getLogger(__name__)
 
@@ -34,38 +33,6 @@ class RetrieverLike(Protocol):
     def retrieve(
         self, queries: list[str], k: int | None = None, library: str | None = None
     ) -> list[RetrievedDoc]: ...
-
-
-# --------------------------------------------------------------------------- #
-# Query rewrite prompt (opt-in, off by default)
-# --------------------------------------------------------------------------- #
-
-REWRITE_SYSTEM = """\
-You are a query rewriter for a Python documentation search engine. Given a
-coding task, produce 2-4 short, API-oriented search queries that will find
-the most relevant standard-library documentation.
-
-REPLY WITH EXACTLY THIS TAGGED BLOCK AND NOTHING ELSE:
-<queries>
-one query per line
-</queries>
-
-Rules:
-- Each query <= 80 characters.
-- Focus on module names, function names, class names, and method names.
-- No natural language questions; use keyword phrases like "json loads" or
-  "pathlib Path mkdir".
-- Maximum 4 queries.
-- Do NOT include markdown fences or any text outside the <queries> block.
-"""
-
-
-def build_rewrite_messages(task: str) -> list[BaseMessage]:
-    """Build messages for the query rewrite LLM call."""
-    return [
-        SystemMessage(content=REWRITE_SYSTEM),
-        HumanMessage(content=f"Task:\n{task}"),
-    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -195,6 +162,7 @@ def make_retrieve_node(retriever: RetrieverLike, llm: TextLLM | None, settings: 
         event = {
             "node": "retrieve",
             "attempt": attempt,
+            "ts": utc_now_iso(),
             "summary": {
                 "mode": "task" if is_task_mode else "error",
                 "queries": new_queries,

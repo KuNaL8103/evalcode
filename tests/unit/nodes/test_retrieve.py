@@ -68,6 +68,8 @@ def test_retrieve_task_mode_raw_query():
     event = history[0]
     assert event["node"] == "retrieve"
     assert event["attempt"] == 0
+    assert set(event) == {"node", "attempt", "ts", "summary"}
+    assert isinstance(event["ts"], str) and event["ts"]
     summary = event["summary"]
     assert summary["mode"] == "task"
     assert summary["queries"] == ["write a function to parse json"]
@@ -95,31 +97,32 @@ def test_retrieve_error_mode_merge_and_cap():
     # Prior docs
     prior_doc1 = make_doc("p1", "prior 1", score=0.7)
     prior_doc2 = make_doc("p2", "prior 2", score=0.6)
-    # New docs for error queries
-    new_doc1 = make_doc("n1", "new 1", score=0.95)
-    new_doc2 = make_doc("n2", "new 2", score=0.9)
-    new_doc3 = make_doc("n3", "new 3", score=0.85)
+    prior_doc3 = make_doc("p3", "prior 3", score=0.5)
+    # New docs for error queries (n1 has same id as prior_doc1 but new score/text)
+    n1_new = make_doc("p1", "new p1", score=0.99, import_path="math.sqrt")
+    n1 = make_doc("n1", "new 1", score=0.95)
+    n3 = make_doc("n3", "new 3", score=0.85)
 
-    # retrieval_max_docs=3 to test cap
+    # retrieval_max_docs=4 to test cap
     retriever = FakeRetriever(
         docs_by_query={
-            "math sqroot": [new_doc1, new_doc2],
-            "math sqrt fix": [new_doc3],
+            "math sqroot": [n1, n1_new],
+            "math sqrt fix": [n3],
         }
     )
     llm = ScriptedLLM(["dummy"])
 
-    node = make_retrieve_node(retriever, llm, make_settings(retrieval_max_docs=3))
+    node = make_retrieve_node(retriever, llm, make_settings(retrieval_max_docs=4))
 
     # State with code present (error mode) and prior docs/queries
     state = initial_state(
         task="write a function using math",
-        settings=make_settings(retrieval_max_docs=3),
+        settings=make_settings(retrieval_max_docs=4),
         auto_approve=True,
     )
     state["code"] = "import math\nmath.sqroot(4)"
     state["retrieval_queries"] = ["write a function using math"]
-    state["retrieved_docs"] = [prior_doc1, prior_doc2]
+    state["retrieved_docs"] = [prior_doc1, prior_doc2, prior_doc3]
     state["error_analysis"] = {
         "retrieval_queries": ["math sqroot", "math sqrt fix"],
         "needs_docs": True,
@@ -135,21 +138,24 @@ def test_retrieve_error_mode_merge_and_cap():
         "math sqrt fix",
     ]
 
-    # Docs: new docs first (score order), then prior docs not duplicated, capped at 3.
-    # With 3 new docs and cap=3, no prior docs fit.
+    # Docs: new docs first (score order), then prior docs not duplicated, capped at 4.
+    # New docs: n1 (0.95), p1/new (0.99), n3 (0.85) -> sorted by score:
+    # p1/new (0.99), n1 (0.95), n3 (0.85)
+    # Then prior p2 (0.6) not duplicated, p3 (0.5) dropped by cap
     docs = result["retrieved_docs"]
-    assert len(docs) == 3  # capped
-    assert docs[0]["id"] == "n1"
-    assert docs[1]["id"] == "n2"
+    assert len(docs) == 4  # capped at 4
+    assert docs[0]["id"] == "p1"  # new p1 with score 0.99
+    assert docs[1]["id"] == "n1"
     assert docs[2]["id"] == "n3"
+    assert docs[3]["id"] == "p2"
 
     # History event mode error
     event = result["history"][0]
     summary = event["summary"]
     assert summary["mode"] == "error"
     assert summary["queries"] == ["math sqroot", "math sqrt fix"]
-    assert summary["n_docs"] == 3
-    assert summary["doc_ids"] == ["n1", "n2", "n3"]
+    assert summary["n_docs"] == 3  # new docs returned by retriever
+    assert summary["doc_ids"] == ["p1", "n1", "n3"]
     assert summary["error"] is None
 
     # Retriever called with both queries
