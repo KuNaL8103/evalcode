@@ -45,8 +45,12 @@ pytest -m slow -q        # real embedding model (downloads MiniLM weights once)
 pytest -m live -q        # real Gemini calls (needs GEMINI_API_KEY; uses free quota — run sparingly)
 ruff check . && ruff format --check .
 
-python -m evalcode.rag.ingest --help   # ingestion (CLI wrapper arrives in Task 12)
-evalcode run "write a function that ..."   # from Task 12
+evalcode ingest --help   # ingest libraries/docs into vector store
+evalcode search "query"  # search the index
+evalcode run "task"      # run a code generation task
+evalcode resume <TASK_ID> --approve  # resume a paused task
+evalcode eval --verify-refs  # verify reference solutions (no LLM)
+evalcode eval --limit 5  # run evaluation with limit
 ```
 
 On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/Scripts/python -m pytest` if the venv isn't activated.
@@ -102,14 +106,15 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 11: observability - `observability.py` (`RunLogger`, `traced_node`, `redact`, `configure_langsmith`, `build_run_config`, `build_summary`), `Dependencies.logger`/`default_dependencies(observe=)`, per-run LLM budget reset, retrieve `ts` fix; 8 new tests (124).
 - Task 12: CLI - `cli.py` (`evalcode ingest|search|run|resume`, exit codes 0/1/2/3/4/5), `__main__.py`, graph helpers `get_task_state`/`stream_resume_task`/`close_dependencies`/`rag_enabled_in`, Task 11 review fixes; 9 new tests (133).
 - Task 13: eval harness - `src/evalcode/evaluation.py` (MODES, SCHEMA_VERSION, EvalTask, load_tasks, stop_reason, result_path, is_complete, load_results, build_record, run_eval, verify_references, build_report, write_report, format_eval_line), 12 eval/tasks/*.yaml, 6 new tests (139).
+- Task 14: docs, CI, packaging — README.md, LICENSE, .github/workflows/ci.yml, pyproject.toml updates, doc reconciliation, fresh-clone verification.
 
-### Latest milestone (Task 13: evaluation harness)
-- eval harness in src/evalcode/evaluation.py (importable, tested) with data in eval/tasks/*.yaml, raw per-run JSON in eval/results/raw/ (git-ignored) plus committed eval/results/report.md.
-- ONE shared LLM client and retriever across runs (throttle state and embedder load preserved).
-- Resumability via per-(task,mode) result files; quota/auth stop writes no result for interrupted run.
-- Error runs recorded but retried; references verified by "evalcode eval --verify-refs" (real sandbox, no LLM).
-- Acceptance tests visible to model (limitation); one sample per cell, differences indicative only.
+### Latest milestone (Task 14: final polish)
+- Project complete: iterative code-generation agent with RAG + LangGraph, Gemini free-tier, sandboxed tests, human review, observability, Typer CLI, evaluation harness.
+- Sandbox writes solution.py and test_solution.py separately; generated tests import via "from solution import ...".
+- Sandbox invariant: passed is True iff category == "pass" and exit_code == 0; collection errors are passed=False with a mapped category; routing uses run_result["passed"].
+- Provider: Gemini via OpenAI-compatible endpoint (https://generativelanguage.googleapis.com/v1beta/openai/); model from LLM_MODEL (default gemini-3.5-flash-lite); no other providers.
+- Config names: Settings fields match .env.example (LLM_MODEL, LLM_MIN_INTERVAL_S, MAX_LLM_CALLS_PER_RUN, MAX_RETRIES, ANALYZE_WITH_LLM, QUERY_REWRITE_WITH_LLM, SANDBOX_TIMEOUT_S, SANDBOX_MEM_MB, RETRIEVAL_TOP_K, RETRIEVAL_MIN_SCORE, CHECKPOINT_DB, LOG_DIR, CHROMA_DIR, DOC_LIBRARIES).
 - Tests: 139 passed; ruff clean.
 
 ### Not started
-Task 14 onward.
+None - project complete; see README.md.

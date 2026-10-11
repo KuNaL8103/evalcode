@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import time
 import uuid
 from collections.abc import Callable
@@ -106,9 +107,6 @@ def load_tasks(tasks_dir: Path, *, only: list[str] | None = None) -> list[EvalTa
             raise ConfigError(
                 f"id mismatch in {file_path.name}: id={task.id} != stem={file_path.stem}"
             )
-
-        if task.id in tasks:
-            raise ConfigError(f"duplicate task id: {task.id} (first in {file_path.name})")
 
         tasks[task.id] = task
 
@@ -384,7 +382,7 @@ def run_eval(
                 "failure_reason": f"{type(exc).__name__}: "
                 f"{redact(str(exc), secrets_tuple, max_str=300)}",
                 "run_id": run_id,
-                "model": deps.settings.llm_model or "gemini-3.5-flash-lite",
+                "model": deps.settings.llm_model,
                 "finished_ts": utc_now_iso(),
             }
             # Write error record
@@ -407,9 +405,8 @@ def run_eval(
         r = stop_reason(state)
         if r:
             stopped = r
-            executed += 1  # count the quota/auth run as executed
-            pending_runs -= 1
-            # Do NOT write result file for the interrupted run
+            # Do NOT count the quota/auth run as executed (no result file written)
+            # Do NOT decrement pending_runs for this run (it remains pending)
             if on_line:
                 on_line(f"eval {task.id} {mode}: STOPPED {r}")
             break
@@ -420,7 +417,7 @@ def run_eval(
             mode=mode,
             state=state,
             wall_s=elapsed,
-            model=deps.settings.llm_model or "gemini-3.5-flash-lite",
+            model=deps.settings.llm_model,
             run_id=run_id,
             secrets=secrets_tuple,
         )
@@ -553,12 +550,21 @@ def build_report(results: list[dict], tasks: list[EvalTask], *, model: str | Non
     rag_results = [r for r in complete if r["mode"] == "rag"]
     norag_results = [r for r in complete if r["mode"] == "norag"]
 
+    # Count tasks without both modes complete
+    rag_complete_tasks = {r["task_id"] for r in rag_results}
+    norag_complete_tasks = {r["task_id"] for r in norag_results}
+    incomplete_pairs = sum(
+        1
+        for task in tasks
+        if task.id not in rag_complete_tasks or task.id not in norag_complete_tasks
+    )
+
     lines = []
     lines.append("# evalcode evaluation report")
     model_str = model or "unknown"
     lines.append(
         f"{model_str} | tasks {len(tasks)} | complete runs {len(complete)} | "
-        f"error runs {len(error_results)} | incomplete pairs"
+        f"error runs {len(error_results)} | incomplete pairs {incomplete_pairs}"
     )
     lines.append("")
 
@@ -583,8 +589,8 @@ def build_report(results: list[dict], tasks: list[EvalTask], *, model: str | Non
         mean_attempts = sum(r["attempts"] for r in mode_results) / runs
         mean_llm_calls = sum(r["llm_calls"] for r in mode_results) / runs
         mean_tokens = sum(r["total_tokens"] for r in mode_results) / runs
-        walls = sorted(r["wall_s"] for r in mode_results)
-        median_wall = walls[len(walls) // 2] if walls else 0.0
+        walls = [r["wall_s"] for r in mode_results]
+        median_wall = statistics.median(walls) if walls else 0.0
 
         lines.append(
             f"| {mode_name} | {runs} | {passed} | {pass_rate:.1%} | {first_try} | "
@@ -649,15 +655,25 @@ def build_report(results: list[dict], tasks: list[EvalTask], *, model: str | Non
             )
             lines.append("")
 
-    # Per task table
+    # Per task table - include error results in cell display
     lines.append("## Per task")
     lines.append("")
     lines.append("| id | libs | rag | norag |")
     lines.append("|----|------|-----|-------|")
 
+    # Build mappings that include error results for per-task display
+    rag_by_task_all = {r["task_id"]: r for r in complete if r["mode"] == "rag"}
+    norag_by_task_all = {r["task_id"]: r for r in complete if r["mode"] == "norag"}
+    # Add error results (they don't appear in complete)
+    for r in error_results:
+        if r["mode"] == "rag":
+            rag_by_task_all[r["task_id"]] = r
+        elif r["mode"] == "norag":
+            norag_by_task_all[r["task_id"]] = r
+
     for task in tasks:
-        r_r = rag_by_task.get(task.id)
-        r_n = norag_by_task.get(task.id)
+        r_r = rag_by_task_all.get(task.id)
+        r_n = norag_by_task_all.get(task.id)
 
         def cell(r: dict | None) -> str:
             if r is None:

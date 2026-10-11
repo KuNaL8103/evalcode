@@ -859,6 +859,9 @@ def test_run_interactive_review_reject_then_approve(
     assert output.count("HUMAN REVIEW REQUIRED") == 2, (
         "review should be rendered exactly twice (once per pause)"
     )
+    # Decision lines should appear in output (from format_event for human_review)
+    assert "decision=reject" in output
+    assert "decision=approve" in output
 
     # The revise prompt (llm.calls[1] human message) should contain the feedback
     llm = fake_llm_holder["llm"]
@@ -1283,7 +1286,7 @@ def test_run_options_help_and_entry_point(
     assert "resume" in result_help.output
 
     # Test pyproject.toml has project.scripts["evalcode"] == "evalcode.cli:app"
-    pyproject = Path("pyproject.toml")
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     assert pyproject.exists()
     with open(pyproject, "rb") as f:
         data = tomllib.load(f)

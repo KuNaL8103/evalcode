@@ -175,6 +175,8 @@ Task 12 decisions: CLI shape and exit codes (0 approved, 1 failed/other, 2 usage
 
 Task 13 decisions: harness in src/evalcode/evaluation.py (importable, tested) with data in eval/tasks/*.yaml, raw per-run JSON in eval/results/raw/ (git-ignored) plus a committed eval/results/report.md; ONE shared LLM client and retriever across runs (throttle state and embedder load preserved); resumability via per-(task,mode) result files; quota/auth stop writes no result for the interrupted run; error runs are recorded but retried; acceptance tests are visible to the model (limitation); references verified by "evalcode eval --verify-refs" (real sandbox, no LLM), not by the pytest suite, to keep it < 60 s; one sample per cell, differences indicative only.
 
+Task 14 decisions: README results are copied from the committed eval/results/report.md; CI matrix ubuntu 3.11/3.13 and windows 3.13 with CPU torch on Linux and --verify-refs as the Linux sandbox check; MIT; eval results are one sample per cell.
+
 ## 4. RAG layer
 
 - **Ingestion**: (a) *introspection loader*: for each configured library walk the public namespace (`__all__` or non-underscore names) and emit one chunk per function/class/method: `import_path + signature + docstring (truncated)`; class chunks include a method index. (b) *text loader*: .md/.rst/.txt split by headings then paragraphs.
@@ -228,7 +230,7 @@ All errors derive from `LLMError`. Nodes talk only to `TextLLM`; nothing else im
 
 - Unit tests: `FakeEmbedder` (deterministic hashing), `FakeChatModel` (scripted outputs and scripted openai-style exceptions, for `LLMClient`), `ScriptedLLM` (implements `TextLLM`, scripted tagged responses with usage), real sandbox on tiny snippets, `MemorySaver` for graph tests. Backoff tests inject fake sleep/clock.
 - Markers: `live` (real Gemini calls; needs `GEMINI_API_KEY`; consumes free quota) and `slow` (downloads the real embedding model); both deselected by default.
-- Eval harness (`eval/`): fixed tasks with reference solutions and acceptance tests; compares RAG on vs off; resumable and quota-aware.
+- Eval harness (`src/evalcode/evaluation.py`, `eval/tasks/`): fixed tasks with reference solutions and acceptance tests; compares RAG on vs off; resumable and quota-aware.
 
 ## 10. Configuration (env or `.env`; real env vars win over `.env`; blank = unset)
 

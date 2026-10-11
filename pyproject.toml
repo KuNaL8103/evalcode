@@ -6,6 +6,9 @@ build-backend = "hatchling.build"
 name = "evalcode"
 version = "0.1.0"
 description = "Iterative code-generation agent: RAG + LangGraph with a Gemini free-tier model, sandboxed tests, and a bounded retry loop."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Kunal Dabbe" }]
 requires-python = ">=3.11"
 dependencies = [
     "langgraph",
@@ -23,6 +26,9 @@ dependencies = [
     "rich",
     "pyyaml",
 ]
+
+[project.urls]
+Repository = "https://github.com/KuNaL8103/evalcode"
 
 [project.optional-dependencies]
 dev = [

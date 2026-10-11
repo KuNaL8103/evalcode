@@ -4,6 +4,8 @@ Each task = one Claude Code session, ending with: tests written and passing, `ru
 
 LLM: Gemini only (default `gemini-3.5-flash-lite` via the OpenAI-compatible endpoint, swap via `LLM_MODEL`). Embeddings: local `sentence-transformers/all-MiniLM-L6-v2`. Vector store: Chroma. Free-tier quota is a design constraint: backoff, throttling, call budgets, and small prompts are built in.
 
+**Note:** Tasks 1 and 4 were first built against OpenRouter and switched to Gemini; the commit-message column preserves the original wording.
+
 ## Overview
 
 | # | Task | Key deliverables | New unit tests (cumulative) | Commit |

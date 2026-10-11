@@ -235,7 +235,7 @@ def test_task_files_valid_and_loader_rejects_bad_input(
         load_tasks(bad_dir)
 
     # 5. duplicate id - create two files with same id but different stems
-    # The loader checks id!=stem first, so we expect either error
+    # The loader checks id!=stem first, so this triggers "id mismatch"
     bad_dir = tmp_path / "duplicate"
     bad_dir.mkdir()
     dup_content = (
@@ -243,7 +243,7 @@ def test_task_files_valid_and_loader_rejects_bad_input(
     )
     (bad_dir / "dup1.yaml").write_text(dup_content)
     (bad_dir / "dup2.yaml").write_text(dup_content)
-    with pytest.raises(Exception, match="duplicate task id|id mismatch"):
+    with pytest.raises(Exception, match="id mismatch"):
         load_tasks(bad_dir)
 
     # 6. blank tests
@@ -539,7 +539,8 @@ def test_run_eval_quota_stop_and_error_isolation(
         out_dir=out_dir,
     )
     # First run (task_a rag) passes, second (task_a norag) raises quota
-    assert outcome.executed == 2
+    # The quota run writes NO result file, so executed=1, pending=3 (quota run + 2 remaining)
+    assert outcome.executed == 1
     assert outcome.stopped == "quota"
     # The quota run has NO result file
     raw_files = list((out_dir / "raw").glob("*.json"))
@@ -549,8 +550,8 @@ def test_run_eval_quota_stop_and_error_isolation(
     assert record["task_id"] == "task_a"
     assert record["mode"] == "rag"
     assert record["status"] == "approved"
-    # Rest pending
-    assert outcome.pending == 2  # task_b rag + task_b norag
+    # Rest pending (quota run + task_b rag + task_b norag)
+    assert outcome.pending == 3
 
     # --- (b) LLMAuthError -> stopped "auth" ---
     script_auth = [
@@ -572,7 +573,7 @@ def test_run_eval_quota_stop_and_error_isolation(
         deps=deps_auth,
         out_dir=out_dir_auth,
     )
-    assert outcome_auth.executed == 2
+    assert outcome_auth.executed == 1
     assert outcome_auth.stopped == "auth"
     raw_files_auth = list((out_dir_auth / "raw").glob("*.json"))
     assert len(raw_files_auth) == 1
@@ -855,11 +856,11 @@ def test_build_report_aggregates_and_pairing(
 
     # Check summary rows per mode (exact format)
     # rag: 3 runs, 2 passed, first_try=2, mean_attempts=1.67, mean_llm_calls=3.33,
-    # mean_tokens=250, median_wall=5.0
+    # mean_tokens=250, median_wall=5.0 (walls: 5.0, 5.0, 15.0 -> median 5.0)
     assert "| rag | 3 | 2 | 66.7% | 2 | 1.67 | 3.33 | 250 | 5.0 |" in report
     # norag: 2 runs, 1 passed, first_try=0, mean_attempts=2.50, mean_llm_calls=5.00,
-    # mean_tokens=375, median_wall=15.0
-    assert "| norag | 2 | 1 | 50.0% | 0 | 2.50 | 5.00 | 375 | 15.0 |" in report
+    # mean_tokens=375, median_wall=12.5 (walls: 10.0, 15.0 -> median 12.5)
+    assert "| norag | 2 | 1 | 50.0% | 0 | 2.50 | 5.00 | 375 | 12.5 |" in report
 
     # Paired comparison: task_a and task_b have both modes, task_c only rag, task_d error
     assert "both pass: 1, rag only: 0, norag only: 0, neither: 1" in report
@@ -872,8 +873,8 @@ def test_build_report_aggregates_and_pairing(
     assert "| task_a | json | PASS a=1 c=2 | PASS a=2 c=4 |" in report
     assert "| task_b | json | FAIL a=3 c=6 | FAIL a=3 c=6 |" in report
     assert "| task_c | json | PASS a=1 c=2 | - |" in report
-    # task_d has error status - shows as "-" for both (not complete, so not in complete)
-    assert "| task_d | json | - | - |" in report
+    # task_d has error status in rag mode - shows as "error" for rag, "-" for norag
+    assert "| task_d | json | error | - |" in report
 
     # Caveats - error results named
     assert "Tasks with errors: task_d" in report
@@ -1028,6 +1029,65 @@ def test_eval_cli_and_verify_references(
     assert "skipped=0" in result6.output
     report_path = out_dir / "report.md"
     assert report_path.exists()
+
+    # store.close called exactly once per normal run
+    # Create a fresh retriever for this test
+    retriever_close_test = ClosableRetriever(
+        default=[make_doc("doc1", "json.loads parses JSON", 0.9, "json", "json.loads", "json")]
+    )
+
+    def fake_build_eval_deps_close(settings: Settings, *, rag: bool) -> Dependencies:
+        ret = retriever_close_test if rag else None
+        return make_deps(settings, script, sandbox=sandbox, retriever=ret)
+
+    monkeypatch.setattr(cli_module, "_build_eval_deps", fake_build_eval_deps_close)
+    out_dir_close = tmp_path / "eval_out_close"
+    result_close = runner.invoke(
+        cli_module.app,
+        [
+            "eval",
+            "--modes",
+            "rag",
+            "--limit",
+            "1",
+            "--out",
+            str(out_dir_close),
+            "--tasks-dir",
+            str(tasks_dir),
+        ],
+    )
+    assert result_close.exit_code == 0
+    # store.close should be called exactly once for the single rag run
+    assert retriever_close_test.store.close.call_count == 1
+
+    # Also test --modes norag does not close a retriever it never received
+    retriever_norag = ClosableRetriever(
+        default=[make_doc("doc1", "json.loads parses JSON", 0.9, "json", "json.loads", "json")]
+    )
+
+    def fake_build_eval_deps_norag(settings: Settings, *, rag: bool) -> Dependencies:
+        return make_deps(settings, script, sandbox=sandbox, retriever=None)
+
+    monkeypatch.setattr(cli_module, "_build_eval_deps", fake_build_eval_deps_norag)
+    out_dir_norag = tmp_path / "eval_out_norag"
+    result_norag = runner.invoke(
+        cli_module.app,
+        [
+            "eval",
+            "--modes",
+            "norag",
+            "--limit",
+            "1",
+            "--out",
+            str(out_dir_norag),
+            "--tasks-dir",
+            str(tasks_dir),
+        ],
+    )
+    assert result_norag.exit_code == 0
+    # No retriever was passed, so no close should be called
+    # (retriever_norag.store.close is a MagicMock but we never use it)
+    assert retriever_norag.store.close.call_count == 0
 
     # --modes rag with retriever None -> exit 4 with ingest hint
     def fake_no_retriever(settings: Settings, *, rag: bool):

@@ -782,8 +782,8 @@ _EVAL_TASKS_DIR_DEFAULT = Path("eval/tasks")
 _EVAL_OUT_DIR_DEFAULT = Path("eval/results")
 
 
-@app.command()
-def eval(
+@app.command("eval")
+def eval_command(
     tasks_dir: Annotated[
         Path,
         typer.Option("--tasks-dir", help="Directory containing task YAML files"),
