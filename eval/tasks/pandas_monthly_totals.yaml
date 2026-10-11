@@ -1,0 +1,56 @@
+id: pandas_monthly_totals
+title: Monthly totals from date strings
+libraries: [pandas]
+difficulty: 2
+task: |
+  Write a function `monthly_totals(df) -> dict[str, float]` that takes a DataFrame with
+  string column "date" (format YYYY-MM-DD) and numeric "amount". Returns dict mapping
+  "YYYY-MM" to sum of amounts, in chronological order.
+tests: |
+  from solution import monthly_totals
+  import pandas as pd
+
+  def test_basic():
+      df = pd.DataFrame({
+          "date": ["2024-01-15", "2024-01-20", "2024-02-10"],
+          "amount": [100, 200, 50]
+      })
+      result = monthly_totals(df)
+      assert result == {"2024-01": 300.0, "2024-02": 50.0}
+
+  def test_unsorted_input():
+      df = pd.DataFrame({
+          "date": ["2024-02-01", "2024-01-01"],
+          "amount": [100, 200]
+      })
+      result = monthly_totals(df)
+      assert list(result.keys()) == ["2024-01", "2024-02"]
+
+  def test_same_month_multiple():
+      df = pd.DataFrame({
+          "date": ["2024-01-01", "2024-01-15", "2024-01-31"],
+          "amount": [10, 20, 30]
+      })
+      result = monthly_totals(df)
+      assert result == {"2024-01": 60.0}
+
+  def test_empty():
+      df = pd.DataFrame({"date": [], "amount": []})
+      result = monthly_totals(df)
+      assert result == {}
+
+  def test_negative_amounts():
+      df = pd.DataFrame({"date": ["2024-01-01", "2024-01-02"], "amount": [100, -30]})
+      result = monthly_totals(df)
+      assert result == {"2024-01": 70.0}
+reference: |
+  import pandas as pd
+
+  def monthly_totals(df) -> dict[str, float]:
+      if df.empty:
+          return {}
+      df = df.copy()
+      df["date"] = pd.to_datetime(df["date"])
+      df["month"] = df["date"].dt.strftime("%Y-%m")
+      grouped = df.groupby("month", sort=True)["amount"].sum()
+      return grouped.to_dict()

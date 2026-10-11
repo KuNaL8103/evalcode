@@ -1,0 +1,32 @@
+id: dt_utc_iso
+title: Convert timestamp to UTC ISO 8601 with Z suffix
+libraries: [datetime]
+difficulty: 1
+task: |
+  Write a function `to_utc_iso(ts: float) -> str` that converts a Unix timestamp (seconds since
+  epoch, may have fractional part) to an ISO 8601 UTC string with "Z" suffix, whole seconds only
+  (no microseconds). Example: 0 -> "1970-01-01T00:00:00Z". Do not use deprecated
+  `datetime.utcfromtimestamp`.
+tests: |
+  from solution import to_utc_iso
+
+  def test_epoch():
+      assert to_utc_iso(0) == "1970-01-01T00:00:00Z"
+
+  def test_known_timestamp():
+      # 2024-01-01 12:30:45 UTC
+      assert to_utc_iso(1704112245) == "2024-01-01T12:30:45Z"
+
+  def test_fractional_seconds_truncated():
+      # Fractional part should be truncated, not rounded
+      assert to_utc_iso(1704112245.9) == "2024-01-01T12:30:45Z"
+
+  def test_leap_year():
+      # 2020-02-29 00:00:00 UTC
+      assert to_utc_iso(1582934400) == "2020-02-29T00:00:00Z"
+reference: |
+  from datetime import datetime, timezone
+
+  def to_utc_iso(ts: float) -> str:
+      dt = datetime.fromtimestamp(ts, tz=timezone.utc).replace(microsecond=0)
+      return dt.isoformat().replace("+00:00", "Z")

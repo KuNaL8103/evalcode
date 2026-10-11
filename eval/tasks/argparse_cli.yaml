@@ -1,0 +1,62 @@
+id: argparse_cli
+title: Argument parser with mutually exclusive flags
+libraries: [argparse]
+difficulty: 2
+task: |
+  Write a function `build_parser() -> argparse.ArgumentParser` that creates an argument parser with:
+  - Positional `files` (nargs="+")
+  - `-v/--verbose` counted (action="count", default=0)
+  - `--output` default "out.txt"
+  - Mutually exclusive group with `--json` and `--csv` flags (store_true)
+  Also write `parse_args(argv: list[str]) -> argparse.Namespace` that calls parser.parse_args(argv).
+tests: |
+  from solution import build_parser, parse_args
+
+  def test_positional_files():
+      ns = parse_args(["a.txt", "b.txt"])
+      assert ns.files == ["a.txt", "b.txt"]
+
+  def test_verbose_count():
+      ns = parse_args(["-v", "-v", "file.txt"])
+      assert ns.verbose == 2
+
+  def test_output_default():
+      ns = parse_args(["file.txt"])
+      assert ns.output == "out.txt"
+
+  def test_output_custom():
+      ns = parse_args(["--output", "custom.txt", "file.txt"])
+      assert ns.output == "custom.txt"
+
+  def test_json_flag():
+      ns = parse_args(["--json", "file.txt"])
+      assert ns.json is True
+      assert ns.csv is False
+
+  def test_csv_flag():
+      ns = parse_args(["--csv", "file.txt"])
+      assert ns.csv is True
+      assert ns.json is False
+
+  def test_mutually_exclusive():
+      try:
+          parse_args(["--json", "--csv", "file.txt"])
+          assert False, "should error"
+      except SystemExit:
+          pass
+reference: |
+  import argparse
+
+  def build_parser() -> argparse.ArgumentParser:
+      parser = argparse.ArgumentParser()
+      parser.add_argument("files", nargs="+")
+      parser.add_argument("-v", "--verbose", action="count", default=0)
+      parser.add_argument("--output", default="out.txt")
+      group = parser.add_mutually_exclusive_group()
+      group.add_argument("--json", action="store_true")
+      group.add_argument("--csv", action="store_true")
+      return parser
+
+  def parse_args(argv: list[str]) -> argparse.Namespace:
+      parser = build_parser()
+      return parser.parse_args(argv)

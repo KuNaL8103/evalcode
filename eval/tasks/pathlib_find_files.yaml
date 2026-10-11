@@ -1,0 +1,52 @@
+id: pathlib_find_files
+title: Recursively find files with suffix
+libraries: [pathlib]
+difficulty: 1
+task: |
+  Write a function `list_files(root: str, suffix: str) -> list[str]` that recursively finds all
+  files under `root` ending with `suffix`. Returns sorted list of paths relative to `root`
+  using forward slashes (even on Windows). Use `pathlib.Path`.
+tests: |
+  from solution import list_files
+  import tempfile
+  import os
+  from pathlib import Path
+
+  def test_basic(tmp_path):
+      (tmp_path / "a.txt").write_text("")
+      (tmp_path / "b.log").write_text("")
+      sub = tmp_path / "sub"
+      sub.mkdir()
+      (sub / "c.txt").write_text("")
+      (sub / "d.log").write_text("")
+      result = list_files(str(tmp_path), ".txt")
+      assert result == ["a.txt", "sub/c.txt"]
+
+  def test_no_matches(tmp_path):
+      (tmp_path / "a.log").write_text("")
+      assert list_files(str(tmp_path), ".txt") == []
+
+  def test_empty_dir(tmp_path):
+      assert list_files(str(tmp_path), ".txt") == []
+
+  def test_nested_dirs(tmp_path):
+      (tmp_path / "a" / "b" / "c.txt").parent.mkdir(parents=True)
+      (tmp_path / "a" / "b" / "c.txt").write_text("")
+      (tmp_path / "x.txt").write_text("")
+      result = list_files(str(tmp_path), ".txt")
+      assert result == ["a/b/c.txt", "x.txt"]
+
+  def test_suffix_with_dot(tmp_path):
+      (tmp_path / "file.py").write_text("")
+      assert list_files(str(tmp_path), ".py") == ["file.py"]
+reference: |
+  from pathlib import Path
+
+  def list_files(root: str, suffix: str) -> list[str]:
+      root_path = Path(root)
+      files = []
+      for path in root_path.rglob(f"*{suffix}"):
+          if path.is_file():
+              rel = path.relative_to(root_path)
+              files.append(rel.as_posix())
+      return sorted(files)

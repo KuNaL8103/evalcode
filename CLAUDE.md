@@ -28,7 +28,7 @@ evalcode/
 │   ├── observability.py                                   (Task 11)
 │   └── cli.py                                             (Task 12)
 ├── tests/{unit,integration}/  tests/fakes.py              (fakes: Task 4 FakeChatModel, Task 5 ScriptedLLM)
-├── eval/{tasks/*.yaml,run_eval.py,results/}  examples/    (Task 13)
+├── eval/{tasks/*.yaml,results/}  src/evalcode/evaluation.py  (Task 13)
 ├── .github/workflows/ci.yml  README.md  LICENSE           (Task 14)
 └── data/ logs/                                            (gitignored runtime dirs)
 ```
@@ -101,15 +101,15 @@ On Windows: `.venv\Scripts\activate`, `copy .env.example .env`, and use `.venv/S
 - Task 10: RAG integration - `nodes/retrieve.py` (task + error-driven retrieval, opt-in rewrite), `build_retriever`/`Dependencies.retriever` (RAG-off mode), `route_after_analysis`/`route_after_retrieve`, revise human-path prompt fix; 10 new tests + 1 live/slow (116).
 - Task 11: observability - `observability.py` (`RunLogger`, `traced_node`, `redact`, `configure_langsmith`, `build_run_config`, `build_summary`), `Dependencies.logger`/`default_dependencies(observe=)`, per-run LLM budget reset, retrieve `ts` fix; 8 new tests (124).
 - Task 12: CLI - `cli.py` (`evalcode ingest|search|run|resume`, exit codes 0/1/2/3/4/5), `__main__.py`, graph helpers `get_task_state`/`stream_resume_task`/`close_dependencies`/`rag_enabled_in`, Task 11 review fixes; 9 new tests (133).
+- Task 13: eval harness - `src/evalcode/evaluation.py` (MODES, SCHEMA_VERSION, EvalTask, load_tasks, stop_reason, result_path, is_complete, load_results, build_record, run_eval, verify_references, build_report, write_report, format_eval_line), 12 eval/tasks/*.yaml, 6 new tests (139).
 
-### Latest milestone (Task 6 repair + Gemini audit — 3 commits)
-- RunResult / RunFailure are TypedDicts in `state.py`; sandbox returns plain dicts.
-- Timeout evidence (A7): `elapsed <= 6.0` (actual 3.45s); pid_file 2 PIDs (e.g. 56216, 65984); both `pid_alive` false (Windows `tasklist`).
-- Provider: `gemini-3.5-flash-lite`; endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`; live: PASS, first reply followed tagged format, tokens used.
-- Config renames (`gemini_api_key`, `llm_base_url`, `llm_model`); `.env` blank with comments; set `GEMINI_API_KEY` in `.env` (git-ignored).
-- Tests: 133 passed; ruff clean.
-- Sandbox writes `solution.py` and `test_solution.py` separately; generated tests import via `from solution import ...` (see prompts.py).
-- Sandbox invariant (Task 7c): `run_result['passed']` is True iff category is `pass` and exit_code is 0; collection errors (pytest exit 2) come back passed=False with a mapped category. Task 8 routes on `run_result['passed']`.
+### Latest milestone (Task 13: evaluation harness)
+- eval harness in src/evalcode/evaluation.py (importable, tested) with data in eval/tasks/*.yaml, raw per-run JSON in eval/results/raw/ (git-ignored) plus committed eval/results/report.md.
+- ONE shared LLM client and retriever across runs (throttle state and embedder load preserved).
+- Resumability via per-(task,mode) result files; quota/auth stop writes no result for interrupted run.
+- Error runs recorded but retried; references verified by "evalcode eval --verify-refs" (real sandbox, no LLM).
+- Acceptance tests visible to model (limitation); one sample per cell, differences indicative only.
+- Tests: 139 passed; ruff clean.
 
 ### Not started
-Task 13 onward.
+Task 14 onward.

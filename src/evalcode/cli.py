@@ -1,9 +1,10 @@
-"""Typer CLI for evalcode: ingest, search, run, resume."""
+"""Typer CLI for evalcode: ingest, search, run, resume, eval."""
 
 from __future__ import annotations
 
 import sys
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -13,7 +14,7 @@ from rich.syntax import Syntax
 
 from evalcode.config import Settings
 from evalcode.errors import ConfigError
-from evalcode.graph import close_dependencies, pending_review
+from evalcode.graph import Dependencies, close_dependencies, pending_review
 from evalcode.state import AgentState
 
 # Exit codes
@@ -120,12 +121,13 @@ def format_event(node: str, update: Any) -> str:
     if node == "retrieve":
         mode = summary.get("mode", "")
         queries = summary.get("queries", [])
-        docs = summary.get("docs", [])
-        top_score = summary.get("top_score")
+        n_docs = summary.get("n_docs", 0)
+        scores = summary.get("scores", [])
         error = summary.get("error")
-        parts = [f"[retrieve] mode={mode} queries={len(queries)} docs={len(docs)}"]
-        if top_score is not None:
-            parts.append(f"top={top_score:.3f}")
+        parts = [f"[retrieve] mode={mode} queries={len(queries)} docs={n_docs}"]
+        if scores:
+            top = max(scores)
+            parts.append(f"top={top:.3f}")
         else:
             parts.append("top=-")
         if error:
@@ -133,10 +135,10 @@ def format_event(node: str, update: Any) -> str:
         return " ".join(parts)
 
     if node in ("generate", "revise"):
-        code = summary.get("code", "") or ""
-        tests = summary.get("tests", "") or ""
+        code_chars = summary.get("code_chars", 0)
+        tests_chars = summary.get("tests_chars", 0)
         error = summary.get("error")
-        parts = [f"[{node}] attempt={attempt} code={len(code)} chars tests={len(tests)} chars"]
+        parts = [f"[{node}] attempt={attempt} code={code_chars} chars tests={tests_chars} chars"]
         if error:
             parts.append(f"FAILED error={error}")
         return " ".join(parts)
@@ -426,7 +428,6 @@ def _drive(
 ) -> int:
     """Shared driver for run and resume."""
     from evalcode.graph import (
-        close_dependencies,
         get_task_state,
         pending_review,
         stream_resume_task,
@@ -474,10 +475,9 @@ def _drive(
                 console.print(_safe("Error: interrupted but no review payload"))
                 return EXIT_FAILED
 
-            # Always render the review
-            _render_review(console, payload)
-
             if not interactive:
+                # Non-interactive: render the review and show resume hint
+                _render_review(console, payload)
                 console.print(_safe("AWAITING REVIEW. Resume with:"))
                 resume_cmd = (
                     f"  evalcode resume {task_id} "
@@ -486,7 +486,7 @@ def _drive(
                 console.print(_safe(resume_cmd))
                 return EXIT_PAUSED
 
-            # Interactive prompt
+            # Interactive: _prompt_decision will render the review
             response = _prompt_decision(console, payload)
 
             # Stream the resume
@@ -523,19 +523,9 @@ def _drive(
         msg = redact(str(e), tuple(secrets))
         console.print(_safe(f"Unexpected error: {type(e).__name__}: {msg}"))
         return EXIT_FAILED
-    finally:
-        close_dependencies(deps)
 
 
 # Command: run
-_TASK_FILE_DEFAULT = None
-_TESTS_FILE_DEFAULT = None
-_AUTO_APPROVE_DEFAULT = False
-_NO_RAG_DEFAULT = False
-_INTERACTIVE_DEFAULT = None  # None means auto-detect (tty)
-_OUTPUT_DEFAULT = None
-_SHOW_CODE_DEFAULT = True
-_NO_SHOW_CODE_DEFAULT = False
 
 
 @app.command()
@@ -547,34 +537,34 @@ def run(
     task_file: Annotated[
         Path | None,
         typer.Option("--task-file", help="Read task from file (utf-8)"),
-    ] = _TASK_FILE_DEFAULT,
+    ] = None,
     tests_file: Annotated[
         Path | None,
         typer.Option("--tests", help="Read provided tests from file (utf-8)"),
-    ] = _TESTS_FILE_DEFAULT,
+    ] = None,
     auto_approve: Annotated[
         bool,
         typer.Option("--auto-approve", help="Skip human review (CI/eval mode)"),
-    ] = _AUTO_APPROVE_DEFAULT,
+    ] = False,
     no_rag: Annotated[
         bool,
         typer.Option("--no-rag", help="Disable RAG retrieval"),
-    ] = _NO_RAG_DEFAULT,
+    ] = False,
     interactive: Annotated[
         bool | None,
         typer.Option(
             "--interactive/--no-interactive",
             help="Force interactive mode on/off (default: auto from stdin.isatty())",
         ),
-    ] = _INTERACTIVE_DEFAULT,
+    ] = None,
     output: Annotated[
         Path | None,
         typer.Option("--output", help="Write final code to file (utf-8)"),
-    ] = _OUTPUT_DEFAULT,
+    ] = None,
     show_code: Annotated[
         bool,
         typer.Option("--show-code/--no-show-code", help="Show final code in output"),
-    ] = _SHOW_CODE_DEFAULT,
+    ] = True,
 ) -> None:
     """Run a code generation task."""
     # Validate mutually exclusive task sources
@@ -630,27 +620,31 @@ def run(
         console.print(_safe("RAG disabled: no usable index (run `evalcode ingest`)"))
 
     # Open checkpointer (always, even with --auto-approve)
-    with _open_checkpointer(settings.checkpoint_db) as checkpointer:
-        # Drive
-        exit_code = _drive(
-            task=task,
-            deps=deps,
-            task_id=task_id,
-            provided_tests=provided_tests,
-            auto_approve=auto_approve,
-            checkpointer=checkpointer,
-            interactive=interactive,
-            output_path=output,
-            show_code=show_code,
-            resume_mode=False,
-        )
+    # Wrap in try/finally to ensure close_dependencies is called exactly once
+    # even on early exits (typer.Exit, exceptions)
+    from evalcode.graph import close_dependencies
+
+    try:
+        with _open_checkpointer(settings.checkpoint_db) as checkpointer:
+            # Drive
+            exit_code = _drive(
+                task=task,
+                deps=deps,
+                task_id=task_id,
+                provided_tests=provided_tests,
+                auto_approve=auto_approve,
+                checkpointer=checkpointer,
+                interactive=interactive,
+                output_path=output,
+                show_code=show_code,
+                resume_mode=False,
+            )
+    finally:
+        close_dependencies(deps)
     raise typer.Exit(exit_code)
 
 
 # Command: resume
-_RESUME_APPROVE_DEFAULT = False
-_RESUME_REJECT_DEFAULT = None
-_RESUME_EDIT_FILE_DEFAULT = None
 
 
 @app.command()
@@ -659,30 +653,30 @@ def resume(
     approve: Annotated[
         bool,
         typer.Option("--approve", help="Approve the current solution"),
-    ] = _RESUME_APPROVE_DEFAULT,
+    ] = False,
     reject: Annotated[
         str | None,
         typer.Option("--reject", help="Reject with feedback text"),
-    ] = _RESUME_REJECT_DEFAULT,
+    ] = None,
     edit_file: Annotated[
         Path | None,
         typer.Option("--edit-file", help="Path to file with edited code"),
-    ] = _RESUME_EDIT_FILE_DEFAULT,
+    ] = None,
     interactive: Annotated[
         bool | None,
         typer.Option(
             "--interactive/--no-interactive",
             help="Force interactive mode on/off (default: auto from stdin.isatty())",
         ),
-    ] = _INTERACTIVE_DEFAULT,
+    ] = None,
     output: Annotated[
         Path | None,
         typer.Option("--output", help="Write final code to file (utf-8)"),
-    ] = _OUTPUT_DEFAULT,
+    ] = None,
     show_code: Annotated[
         bool,
         typer.Option("--show-code/--no-show-code", help="Show final code in output"),
-    ] = _SHOW_CODE_DEFAULT,
+    ] = True,
 ) -> None:
     """Resume a paused task after human review."""
     # Validate decision options (at most one)
@@ -693,10 +687,10 @@ def resume(
     settings = _get_settings()
     console = _console()
 
-    # Open checkpointer and read state
-    with _open_checkpointer(settings.checkpoint_db) as checkpointer:
-        from evalcode.graph import get_task_state, rag_enabled_in
+    # Open checkpointer and read state (before building deps)
+    from evalcode.graph import close_dependencies, get_task_state, rag_enabled_in
 
+    with _open_checkpointer(settings.checkpoint_db) as checkpointer:
         state = get_task_state(task_id, settings, checkpointer=checkpointer)
         if state is None:
             console.print(_safe(f"unknown task id: {task_id}"))
@@ -711,23 +705,25 @@ def resume(
         # Determine if RAG was enabled in the original run
         rag = rag_enabled_in(state)
 
-        # Build deps with same RAG topology
-        deps = _build_deps(settings, rag=rag, run_id=task_id)
-        if rag and deps.retriever is None:
-            console.print(
-                _safe(
-                    "this task was started with RAG but the index is unavailable; "
-                    "refusing to resume with a different graph topology"
-                )
+    # Build deps with same RAG topology
+    deps = _build_deps(settings, rag=rag, run_id=task_id)
+    if rag and deps.retriever is None:
+        console.print(
+            _safe(
+                "this task was started with RAG but the index is unavailable; "
+                "refusing to resume with a different graph topology"
             )
-            close_dependencies(deps)
-            raise typer.Exit(EXIT_CONFIG) from None
+        )
+        # No need to call close_dependencies here - finally block will handle it
+        raise typer.Exit(EXIT_CONFIG) from None
 
-        # Determine interactive mode
-        if interactive is None:
-            interactive = sys.stdin.isatty()
+    # Determine interactive mode
+    if interactive is None:
+        interactive = sys.stdin.isatty()
 
-        # Build response
+    # Build response and drive resume - wrap everything in try/finally to ensure
+    # close_dependencies is called exactly once on all paths
+    try:
         response = None
         if approve:
             response = {"decision": "approve"}
@@ -740,7 +736,10 @@ def resume(
                     console.print(_safe("Edit file is empty"))
                     raise typer.Exit(EXIT_FAILED) from None
                 response = {"decision": "edit", "code": code}
-            except Exception as e:
+            except OSError as e:
+                console.print(_safe(f"Cannot read --edit-file: {e}"))
+                raise typer.Exit(EXIT_FAILED) from None
+            except UnicodeDecodeError as e:
                 console.print(_safe(f"Cannot read --edit-file: {e}"))
                 raise typer.Exit(EXIT_FAILED) from None
         elif not interactive:
@@ -759,17 +758,218 @@ def resume(
             raise typer.Exit(EXIT_USAGE)
 
         # Drive resume
-        exit_code = _drive(
-            task="",  # not used in resume mode
-            deps=deps,
-            task_id=task_id,
-            provided_tests=None,
-            auto_approve=False,
-            checkpointer=checkpointer,
-            interactive=interactive,
-            output_path=output,
-            show_code=show_code,
-            resume_mode=True,
-            resume_response=response,
+        with _open_checkpointer(settings.checkpoint_db) as checkpointer:
+            exit_code = _drive(
+                task="",  # not used in resume mode
+                deps=deps,
+                task_id=task_id,
+                provided_tests=None,
+                auto_approve=False,
+                checkpointer=checkpointer,
+                interactive=interactive,
+                output_path=output,
+                show_code=show_code,
+                resume_mode=True,
+                resume_response=response,
+            )
+        raise typer.Exit(exit_code)
+    finally:
+        close_dependencies(deps)
+
+
+# Command: eval
+_EVAL_TASKS_DIR_DEFAULT = Path("eval/tasks")
+_EVAL_OUT_DIR_DEFAULT = Path("eval/results")
+
+
+@app.command()
+def eval(
+    tasks_dir: Annotated[
+        Path,
+        typer.Option("--tasks-dir", help="Directory containing task YAML files"),
+    ] = _EVAL_TASKS_DIR_DEFAULT,
+    out_dir: Annotated[
+        Path,
+        typer.Option("--out", help="Output directory for results"),
+    ] = _EVAL_OUT_DIR_DEFAULT,
+    modes: Annotated[
+        str,
+        typer.Option("--modes", help="Comma-separated modes: rag,norag"),
+    ] = "rag,norag",
+    only: Annotated[
+        str | None,
+        typer.Option("--only", help="Comma-separated task ids to run"),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", help="Max number of runs to execute"),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Re-run even if results exist"),
+    ] = False,
+    report_only: Annotated[
+        bool,
+        typer.Option("--report-only", help="Only generate report from existing results"),
+    ] = False,
+    verify_refs: Annotated[
+        bool,
+        typer.Option("--verify-refs", help="Verify reference solutions (no LLM)"),
+    ] = False,
+) -> None:
+    """Run evaluation across tasks with RAG on/off comparison."""
+    from evalcode.evaluation import (
+        EvalOutcome,
+        load_tasks,
+        run_eval,
+        verify_references,
+        write_report,
+    )
+
+    console = _console()
+
+    # Parse modes
+    mode_list = [m.strip() for m in modes.split(",") if m.strip()]
+    for m in mode_list:
+        if m not in ("rag", "norag"):
+            raise typer.BadParameter(f"Invalid mode: {m}. Must be 'rag' or 'norag'")
+
+    # Validate incompatible options
+    if limit is not None and limit < 1:
+        raise typer.BadParameter("--limit must be >= 1")
+    if report_only and verify_refs:
+        raise typer.BadParameter("--report-only and --verify-refs are mutually exclusive")
+
+    settings = _get_settings()
+
+    # Load tasks
+    try:
+        tasks = load_tasks(tasks_dir, only=only.split(",") if only else None)
+    except ConfigError as e:
+        if only:
+            # Check if it's an unknown id error
+            if "unknown task ids" in str(e):
+                console.print(_safe(str(e)))
+                raise typer.Exit(EXIT_USAGE) from None
+        console.print(_safe(str(e)))
+        raise typer.Exit(EXIT_CONFIG) from None
+
+    # --verify-refs: verify reference solutions using real sandbox
+    if verify_refs:
+        sandbox = _eval_sandbox()
+        console.print(_safe("Verifying reference solutions..."))
+        results = verify_references(tasks, sandbox, settings)
+        all_pass = True
+        for r in results:
+            status = "PASS" if r["passed"] else "FAIL"
+            console.print(
+                _safe(
+                    f"{r['id']} {status} category={r['category']} "
+                    f"tests={r['tests_total']} time={r['duration_s']:.2f}s"
+                )
+            )
+            if not r["passed"]:
+                all_pass = False
+        raise typer.Exit(EXIT_OK if all_pass else EXIT_FAILED)
+
+    # --report-only: generate report from existing results
+    if report_only:
+        raw_dir = out_dir / "raw"
+        if not raw_dir.exists() or not any(raw_dir.glob("*.json")):
+            console.print(_safe(f"no results in {out_dir}"))
+            raise typer.Exit(EXIT_FAILED)
+        report_path = write_report(out_dir, tasks, model=settings.llm_model)
+        console.print(_safe(f"report: {report_path}"))
+        raise typer.Exit(EXIT_OK)
+
+    # Normal evaluation run
+    need_rag = "rag" in mode_list
+    deps = None
+    try:
+        deps = _build_eval_deps(settings, rag=need_rag)
+    except ConfigError as e:
+        console.print(_safe(str(e)))
+        raise typer.Exit(EXIT_CONFIG) from None
+    except Exception as e:
+        secrets = []
+        if settings.gemini_api_key:
+            secrets.append(settings.gemini_api_key.get_secret_value())
+        if settings.langsmith_api_key:
+            secrets.append(settings.langsmith_api_key.get_secret_value())
+        from evalcode.observability import redact
+
+        msg = redact(str(e), tuple(secrets))
+        console.print(_safe(f"Unexpected error: {type(e).__name__}: {msg}"))
+        raise typer.Exit(EXIT_FAILED) from None
+
+    if need_rag and deps.retriever is None:
+        console.print(
+            _safe("RAG mode needs an index: run `evalcode ingest` (or use --modes norag)")
         )
-    raise typer.Exit(exit_code)
+        raise typer.Exit(EXIT_CONFIG)
+
+    # Run evaluation
+    try:
+        outcome: EvalOutcome = run_eval(
+            tasks=tasks,
+            modes=mode_list,
+            deps=deps,
+            out_dir=out_dir,
+            limit=limit,
+            force=force,
+            on_line=lambda s: console.print(_safe(s)),
+        )
+    except Exception as e:
+        secrets = []
+        if settings.gemini_api_key:
+            secrets.append(settings.gemini_api_key.get_secret_value())
+        if settings.langsmith_api_key:
+            secrets.append(settings.langsmith_api_key.get_secret_value())
+        from evalcode.observability import redact
+
+        msg = redact(str(e), tuple(secrets))
+        console.print(_safe(f"Unexpected error: {type(e).__name__}: {msg}"))
+        raise typer.Exit(EXIT_FAILED) from None
+    finally:
+        if deps:
+            close_dependencies(deps)
+
+    # Always write report if any results exist
+    raw_dir = out_dir / "raw"
+    if raw_dir.exists() and any(raw_dir.glob("*.json")):
+        report_path = write_report(out_dir, tasks, model=settings.llm_model)
+        console.print(_safe(f"report: {report_path}"))
+
+    console.print(
+        _safe(
+            f"done: executed={outcome.executed} skipped={outcome.skipped} "
+            f"pending={outcome.pending} errors={outcome.errors}"
+        )
+    )
+
+    # Exit codes
+    if outcome.stopped == "quota":
+        console.print(_safe("stopped: free-tier daily quota exhausted; rerun later to resume"))
+        raise typer.Exit(EXIT_QUOTA)
+    if outcome.stopped == "auth":
+        console.print(_safe("stopped: authentication error"))
+        raise typer.Exit(EXIT_CONFIG)
+    if outcome.stopped == "limit":
+        console.print(_safe("limit reached; rerun to continue"))
+        raise typer.Exit(EXIT_OK)
+    raise typer.Exit(EXIT_OK)
+
+
+# Seam functions for testing (monkeypatched in tests)
+def _build_eval_deps(settings: Settings, *, rag: bool) -> Dependencies:
+    """Build Dependencies for evaluation (shared LLM + optional retriever)."""
+    from evalcode.graph import default_dependencies
+
+    return default_dependencies(settings, rag=rag, observe=True, run_id="eval-shared")
+
+
+def _eval_sandbox() -> Callable[[str, str, float, int], dict]:
+    """Return the real sandbox function."""
+    from evalcode.sandbox.runner import run_in_sandbox
+
+    return run_in_sandbox

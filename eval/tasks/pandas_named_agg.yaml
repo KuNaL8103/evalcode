@@ -1,0 +1,60 @@
+id: pandas_named_agg
+title: Named aggregation with pandas
+libraries: [pandas]
+difficulty: 2
+task: |
+  Write a function `summarize(df) -> DataFrame` that groups by "region" and computes
+  named aggregations: total=("amount", "sum"), n=("amount", "count").
+  Returns DataFrame with reset_index, sorted by total descending then region ascending.
+tests: |
+  from solution import summarize
+  import pandas as pd
+
+  def test_basic():
+      df = pd.DataFrame({
+          "region": ["A", "B", "A", "C"],
+          "amount": [100, 200, 50, 300]
+      })
+      result = summarize(df)
+      assert list(result.columns) == ["region", "total", "n"]
+      # Sorted by total descending: C(300), B(200), A(150)
+      assert list(result["region"]) == ["C", "B", "A"]
+      assert list(result["total"]) == [300, 200, 150]
+      assert list(result["n"]) == [1, 1, 2]
+
+  def test_single_row():
+      df = pd.DataFrame({"region": ["X"], "amount": [42]})
+      result = summarize(df)
+      assert list(result["region"]) == ["X"]
+      assert list(result["total"]) == [42]
+      assert list(result["n"]) == [1]
+
+  def test_ties_sorted_by_region():
+      df = pd.DataFrame({
+          "region": ["B", "A"],
+          "amount": [100, 100]
+      })
+      result = summarize(df)
+      assert list(result["region"]) == ["A", "B"]
+
+  def test_negative_amounts():
+      df = pd.DataFrame({"region": ["A"], "amount": [-50]})
+      result = summarize(df)
+      assert list(result["total"]) == [-50]
+
+  def test_float_amounts():
+      df = pd.DataFrame({"region": ["A", "A"], "amount": [1.5, 2.5]})
+      result = summarize(df)
+      assert result.iloc[0]["total"] == 4.0
+reference: |
+  import pandas as pd
+
+  def summarize(df) -> pd.DataFrame:
+      result = (
+          df.groupby("region")
+          .agg(total=("amount", "sum"), n=("amount", "count"))
+          .reset_index()
+      )
+      # Sort by total descending, then region ascending
+      result = result.sort_values(["total", "region"], ascending=[False, True])
+      return result

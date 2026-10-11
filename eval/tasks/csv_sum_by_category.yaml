@@ -1,0 +1,44 @@
+id: csv_sum_by_category
+title: Sum CSV amounts by category
+libraries: [csv]
+difficulty: 1
+task: |
+  Write a function `sum_by_category(csv_text: str) -> dict[str, float]` that parses CSV text
+  with header row "category,amount". Fields may be quoted and contain commas.
+  Blank lines should be ignored. Returns dict mapping category to sum of amounts.
+tests: |
+  from solution import sum_by_category
+
+  def test_basic():
+      csv = "category,amount\nfood,10.5\ntransport,5.0\nfood,2.5"
+      assert sum_by_category(csv) == {"food": 13.0, "transport": 5.0}
+
+  def test_quoted_comma():
+      csv = 'category,amount\n"food, groceries",10.0\ntransport,5.0'
+      assert sum_by_category(csv) == {"food, groceries": 10.0, "transport": 5.0}
+
+  def test_blank_lines():
+      csv = "category,amount\n\nfood,10\n\n\ntransport,5\n"
+      assert sum_by_category(csv) == {"food": 10.0, "transport": 5.0}
+
+  def test_empty():
+      csv = "category,amount\n"
+      assert sum_by_category(csv) == {}
+
+  def test_multiple_categories():
+      csv = "category,amount\na,1\nb,2\na,3\nc,4\nb,5"
+      assert sum_by_category(csv) == {"a": 4.0, "b": 7.0, "c": 4.0}
+reference: |
+  import csv
+  from io import StringIO
+
+  def sum_by_category(csv_text: str) -> dict[str, float]:
+      result: dict[str, float] = {}
+      reader = csv.DictReader(StringIO(csv_text))
+      for row in reader:
+          if not row["category"] or not row["amount"]:
+              continue
+          cat = row["category"]
+          amt = float(row["amount"])
+          result[cat] = result.get(cat, 0.0) + amt
+      return result

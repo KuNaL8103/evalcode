@@ -1,0 +1,57 @@
+id: numpy_zscore
+title: Column-wise z-score with numpy
+libraries: [numpy]
+difficulty: 2
+task: |
+  Write a function `zscore_columns(a: np.ndarray) -> np.ndarray` that computes the z-score
+  for each column (population std). Columns with zero std become all zeros.
+  No Python loops over elements required.
+  Input is 2D array, output has same shape.
+tests: |
+  from solution import zscore_columns
+  import numpy as np
+
+  def test_basic():
+      a = np.array([[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]])
+      result = zscore_columns(a)
+      # Column 0: mean=2, std=sqrt(2/3), z = [-1/sqrt(2/3), 0, 1/sqrt(2/3)]
+      # Column 1: mean=20, std=sqrt(200/3), z = [-10/sqrt(200/3), 0, 10/sqrt(200/3)]
+      assert result.shape == (3, 2)
+      np.testing.assert_allclose(result.mean(axis=0), [0, 0], atol=1e-10)
+      np.testing.assert_allclose(result.std(axis=0), [1, 1], atol=1e-10)
+
+  def test_zero_std_column():
+      a = np.array([[5.0, 1.0], [5.0, 2.0], [5.0, 3.0]])
+      result = zscore_columns(a)
+      # First column all 5.0 -> std=0 -> all zeros
+      assert np.allclose(result[:, 0], 0)
+      # Second column normal z-score
+      np.testing.assert_allclose(result[:, 1].mean(), 0, atol=1e-10)
+      np.testing.assert_allclose(result[:, 1].std(), 1, atol=1e-10)
+
+  def test_single_row():
+      a = np.array([[1.0, 2.0]])
+      result = zscore_columns(a)
+      # Single row -> std=0 for all columns -> all zeros
+      assert np.allclose(result, 0)
+
+  def test_negative_values():
+      a = np.array([[-1.0, -2.0], [1.0, 2.0]])
+      result = zscore_columns(a)
+      np.testing.assert_allclose(result.mean(axis=0), [0, 0], atol=1e-10)
+      np.testing.assert_allclose(result.std(axis=0), [1, 1], atol=1e-10)
+
+  def test_large_array():
+      a = np.random.default_rng(42).standard_normal((100, 5))
+      result = zscore_columns(a)
+      np.testing.assert_allclose(result.mean(axis=0), 0, atol=1e-10)
+      np.testing.assert_allclose(result.std(axis=0), 1, atol=1e-10)
+reference: |
+  import numpy as np
+
+  def zscore_columns(a: np.ndarray) -> np.ndarray:
+      mean = a.mean(axis=0, keepdims=True)
+      std = a.std(axis=0, keepdims=True, ddof=0)  # population std
+      # Avoid division by zero: where std==0, use 1 (will give 0 after subtracting mean)
+      std_safe = np.where(std == 0, 1, std)
+      return (a - mean) / std_safe

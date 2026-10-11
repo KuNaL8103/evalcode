@@ -1,0 +1,56 @@
+id: dataclasses_inventory
+title: Dataclass with mutable default and validation
+libraries: [dataclasses]
+difficulty: 2
+task: |
+  Define a dataclass `Item(name: str, qty: int = 0, tags: list[str] = <default empty list>)`
+  where the default for `tags` is NOT shared between instances (use `field(default_factory=list)`).
+  Add `__post_init__` that raises `ValueError` if `qty < 0`.
+  Also write a function `to_dict(item: Item) -> dict` that converts an Item to a dict
+  (using `dataclasses.asdict` or equivalent).
+tests: |
+  from solution import Item, to_dict
+
+  def test_defaults():
+      item = Item("apple")
+      assert item.name == "apple"
+      assert item.qty == 0
+      assert item.tags == []
+
+  def test_custom_values():
+      item = Item("banana", qty=5, tags=["fruit", "yellow"])
+      assert item.qty == 5
+      assert item.tags == ["fruit", "yellow"]
+
+  def test_mutable_default_not_shared():
+      item1 = Item("apple")
+      item2 = Item("banana")
+      item1.tags.append("red")
+      assert item2.tags == [], "default list should not be shared"
+
+  def test_negative_qty_raises():
+      try:
+          Item("apple", qty=-1)
+          assert False, "should raise ValueError"
+      except ValueError:
+          pass
+
+  def test_to_dict():
+      item = Item("apple", qty=3, tags=["fruit"])
+      d = to_dict(item)
+      assert d == {"name": "apple", "qty": 3, "tags": ["fruit"]}
+reference: |
+  from dataclasses import dataclass, field, asdict
+
+  @dataclass
+  class Item:
+      name: str
+      qty: int = 0
+      tags: list[str] = field(default_factory=list)
+
+      def __post_init__(self) -> None:
+          if self.qty < 0:
+              raise ValueError("qty must be non-negative")
+
+  def to_dict(item: Item) -> dict:
+      return asdict(item)

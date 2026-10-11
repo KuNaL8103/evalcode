@@ -1,0 +1,46 @@
+id: dt_business_days
+title: Business days between two dates
+libraries: [datetime]
+difficulty: 1
+task: |
+  Write a function `business_days_between(start: date, end: date) -> int` that returns the number
+  of business days (Monday-Friday) in the half-open interval [start, end).
+  If start >= end, return 0.
+tests: |
+  from solution import business_days_between
+  from datetime import date
+
+  def test_same_day():
+      assert business_days_between(date(2024, 1, 1), date(2024, 1, 1)) == 0
+
+  def test_start_after_end():
+      assert business_days_between(date(2024, 1, 5), date(2024, 1, 1)) == 0
+
+  def test_mon_to_fri():
+      # Mon Jan 1 to Fri Jan 5 (exclusive) = 4 business days
+      assert business_days_between(date(2024, 1, 1), date(2024, 1, 5)) == 4
+
+  def test_crosses_weekend():
+      # Fri Jan 5 to Mon Jan 8 (exclusive) = 1 business day (Fri)
+      assert business_days_between(date(2024, 1, 5), date(2024, 1, 8)) == 1
+
+  def test_full_week():
+      # Mon Jan 1 to Mon Jan 8 (exclusive) = 5 business days
+      assert business_days_between(date(2024, 1, 1), date(2024, 1, 8)) == 5
+
+  def test_two_weeks():
+      # Mon Jan 1 to Mon Jan 15 (exclusive) = 10 business days
+      assert business_days_between(date(2024, 1, 1), date(2024, 1, 15)) == 10
+reference: |
+  from datetime import date, timedelta
+
+  def business_days_between(start: date, end: date) -> int:
+      if start >= end:
+          return 0
+      count = 0
+      current = start
+      while current < end:
+          if current.weekday() < 5:  # Mon=0 .. Fri=4
+              count += 1
+          current += timedelta(days=1)
+      return count

@@ -1,0 +1,33 @@
+id: itertools_rle
+title: Run-length encoding using itertools.groupby
+libraries: [itertools]
+difficulty: 1
+task: |
+  Write a function `rle(s: str) -> list[tuple[str, int]]` that performs run-length encoding
+  on the input string using `itertools.groupby`. Returns a list of (character, count) tuples.
+  Empty string returns empty list.
+tests: |
+  from solution import rle
+
+  def test_empty():
+      assert rle("") == []
+
+  def test_single_char():
+      assert rle("a") == [("a", 1)]
+
+  def test_repeated_chars():
+      assert rle("aaa") == [("a", 3)]
+
+  def test_mixed():
+      assert rle("aaabbc") == [("a", 3), ("b", 2), ("c", 1)]
+
+  def test_alternating():
+      assert rle("abab") == [("a", 1), ("b", 1), ("a", 1), ("b", 1)]
+
+  def test_unicode():
+      assert rle("aáa") == [("a", 1), ("á", 1), ("a", 1)]
+reference: |
+  from itertools import groupby
+
+  def rle(s: str) -> list[tuple[str, int]]:
+      return [(char, sum(1 for _ in group)) for char, group in groupby(s)]

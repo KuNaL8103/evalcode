@@ -1,0 +1,57 @@
+id: re_log_parse
+title: Parse log lines with named regex groups
+libraries: [re]
+difficulty: 2
+task: |
+  Write a function `parse_log_line(line: str) -> dict | None` that parses log lines in the format:
+  "YYYY-MM-DD HH:MM:SS [LEVEL] component: message"
+  Example: "2026-01-05 12:30:45 [ERROR] db: connection lost"
+  Returns dict with keys "ts", "level", "component", "message" using named groups.
+  Returns None for non-matching lines.
+tests: |
+  from solution import parse_log_line
+
+  def test_basic():
+      line = "2026-01-05 12:30:45 [ERROR] db: connection lost"
+      result = parse_log_line(line)
+      assert result == {
+          "ts": "2026-01-05 12:30:45",
+          "level": "ERROR",
+          "component": "db",
+          "message": "connection lost"
+      }
+
+  def test_info_level():
+      line = "2026-01-05 10:00:00 [INFO] api: request received"
+      result = parse_log_line(line)
+      assert result["level"] == "INFO"
+      assert result["component"] == "api"
+
+  def test_warning_level():
+      line = "2026-01-05 15:30:00 [WARN] cache: eviction"
+      result = parse_log_line(line)
+      assert result["level"] == "WARN"
+
+  def test_non_matching():
+      assert parse_log_line("not a log line") is None
+      assert parse_log_line("") is None
+
+  def test_missing_component():
+      line = "2026-01-05 12:30:45 [ERROR] : something"
+      result = parse_log_line(line)
+      assert result is None  # component is required
+reference: |
+  import re
+
+  LOG_PATTERN = re.compile(
+      r"(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) "
+      r"\[(?P<level>[A-Z]+)\] "
+      r"(?P<component>[^:]+): "
+      r"(?P<message>.*)"
+  )
+
+  def parse_log_line(line: str) -> dict | None:
+      match = LOG_PATTERN.match(line)
+      if not match:
+          return None
+      return match.groupdict()

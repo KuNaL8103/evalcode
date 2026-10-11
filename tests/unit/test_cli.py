@@ -12,13 +12,12 @@ import pytest
 from evalcode.config import Settings
 from evalcode.graph import Dependencies
 from evalcode.observability import build_logger
+from evalcode.rag.types import RetrievedDoc
 from tests.fakes import FakeRetriever, ScriptedLLM, bundle_text, make_doc
 
 # --------------------------------------------------------------------------- #
 # Fixtures and helpers
 # --------------------------------------------------------------------------- #
-
-pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
@@ -27,6 +26,8 @@ def cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("CHECKPOINT_DB", str(tmp_path / "checkpoints.sqlite"))
     monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("CHROMA_DIR", str(tmp_path / "chroma"))
+    # Set a fake API key for tests (built at runtime, not as literal)
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "x" * 35)
     from evalcode.config import get_settings
 
     get_settings.cache_clear()
@@ -52,6 +53,13 @@ class ClosableRetriever(FakeRetriever):
         super().__init__(*args, **kwargs)
         self.store = MagicMock()
         self.store.close = MagicMock()
+        self.retrieve_k: list[int | None] = []
+
+    def retrieve(
+        self, queries: list[str], k: int | None = None, library: str | None = None
+    ) -> list[RetrievedDoc]:
+        self.retrieve_k.append(k)
+        return super().retrieve(queries, k, library)
 
 
 class FakeSandboxFail(FakeSandbox):
@@ -129,16 +137,24 @@ def install_deps(
 # --------------------------------------------------------------------------- #
 
 
-def test_format_event_classify_exit_and_rag_flag() -> None:
+def test_format_event_classify_exit_and_rag_flag(cli_env: Settings, tmp_path: Path) -> None:
     """Test format_event for all node types and classify_exit / rag_enabled_in."""
     from evalcode.cli import classify_exit, format_event
     from evalcode.graph import close_dependencies, rag_enabled_in
     from evalcode.state import AgentState
 
-    # format_event - retrieve
+    # format_event - retrieve (real keys: mode, queries, n_docs, scores, error)
     update = {
         "history": [
-            {"summary": {"mode": "task", "queries": ["q1"], "docs": ["d1"], "top_score": 0.9}}
+            {
+                "summary": {
+                    "mode": "task",
+                    "queries": ["q1"],
+                    "n_docs": 1,
+                    "scores": [0.9],
+                    "error": None,
+                }
+            }
         ]
     }
     assert format_event("retrieve", update) == "[retrieve] mode=task queries=1 docs=1 top=0.900"
@@ -146,26 +162,32 @@ def test_format_event_classify_exit_and_rag_flag() -> None:
     # format_event - retrieve with error
     update = {
         "history": [
-            {"summary": {"mode": "task", "queries": ["q1"], "docs": [], "error": "not found"}}
+            {
+                "summary": {
+                    "mode": "task",
+                    "queries": ["q1"],
+                    "n_docs": 0,
+                    "scores": [],
+                    "error": "not found",
+                }
+            }
         ]
     }
     line = format_event("retrieve", update)
     assert "mode=task" in line and "error=not found" in line
 
-    # format_event - generate
-    update = {
-        "history": [
-            {"attempt": 1, "summary": {"code": "def f(): pass", "tests": "def test(): pass"}}
-        ]
-    }
+    # format_event - generate (real keys: code_chars, tests_chars, error)
+    update = {"history": [{"attempt": 1, "summary": {"code_chars": 13, "tests_chars": 16}}]}
     assert format_event("generate", update) == "[generate] attempt=1 code=13 chars tests=16 chars"
 
     # format_event - generate with error
-    update = {"history": [{"attempt": 1, "summary": {"code": "x", "tests": "y", "error": "oops"}}]}
+    update = {
+        "history": [{"attempt": 1, "summary": {"code_chars": 1, "tests_chars": 1, "error": "oops"}}]
+    }
     assert "FAILED error=oops" in format_event("generate", update)
 
     # format_event - revise
-    update = {"history": [{"attempt": 2, "summary": {"code": "a", "tests": "b"}}]}
+    update = {"history": [{"attempt": 2, "summary": {"code_chars": 1, "tests_chars": 1}}]}
     assert format_event("revise", update) == "[revise] attempt=2 code=1 chars tests=1 chars"
 
     # format_event - run_tests PASS
@@ -301,6 +323,98 @@ def test_format_event_classify_exit_and_rag_flag() -> None:
     # close_dependencies - double call safe
     close_dependencies(deps)  # should not raise
 
+    # CONTRACT BLOCK: run real graph with fakes and feed every (node, update) to format_event
+    # This MUST fail on pre-fix cli.py and pass after the fix.
+    from evalcode.graph import Dependencies, stream_task
+    from tests.fakes import FakeRetriever, ScriptedLLM, bundle_text, make_doc
+
+    # Create a fake LLM that returns valid code + tests on first call
+    script = [
+        bundle_text(
+            "def add(a, b):\n    return a + b",
+            "def test_add():\n    assert add(1, 2) == 3",
+        )
+    ]
+    fake_llm = ScriptedLLM(script)
+
+    # Create a fake retriever that returns one doc
+    fake_retriever = FakeRetriever(
+        default=[make_doc("doc1", "json.loads parses JSON", 0.9, "json", "json.loads", "json")]
+    )
+
+    # Build deps with the fake components, no logger (use the settings from cli_env fixture)
+    settings = cli_env
+    deps = Dependencies(
+        llm=fake_llm,
+        settings=settings,
+        sandbox=lambda code, tests, timeout_s, mem_mb: {
+            "passed": True,
+            "category": "pass",
+            "exit_code": 0,
+            "timed_out": False,
+            "duration_s": 0.1,
+            "tests_total": 1,
+            "tests_failed": 0,
+            "failures": [],
+            "stdout": "",
+            "stderr": "",
+        },
+        retriever=fake_retriever,
+        logger=None,
+    )
+
+    # Stream the graph
+    task_id = "test-task-1"
+    events = list(
+        stream_task(
+            task="write a function add(a, b)",
+            deps=deps,
+            task_id=task_id,
+            provided_tests=None,
+            auto_approve=True,
+            checkpointer=None,
+        )
+    )
+
+    # Feed every (node, update) to format_event and verify output
+    retrieve_line = None
+    generate_line = None
+    finalize_line = None
+
+    for node, update in events:
+        line = format_event(node, update)
+        if node == "retrieve":
+            retrieve_line = line
+        elif node == "generate":
+            generate_line = line
+        elif node == "finalize":
+            finalize_line = line
+
+    # Verify retrieve line has docs=1 and top=0.9
+    assert retrieve_line is not None, "retrieve event not found"
+    assert "docs=1" in retrieve_line, f"retrieve line missing docs=1: {retrieve_line}"
+    assert "top=0.900" in retrieve_line, f"retrieve line missing top=0.900: {retrieve_line}"
+
+    # Verify generate line matches expected format from scripted strings
+    assert generate_line is not None, "generate event not found"
+    code_str = "def add(a, b):\n    return a + b"
+    tests_str = "def test_add():\n    assert add(1, 2) == 3"
+    expected_generate = (
+        f"[generate] attempt=1 code={len(code_str)} chars tests={len(tests_str)} chars"
+    )
+    assert generate_line == expected_generate, (
+        f"generate line mismatch: got {generate_line}, expected {expected_generate}"
+    )
+
+    # Verify finalize line has final_code with correct length
+    assert finalize_line is not None, "finalize event not found"
+    assert f"final_code={len(code_str)} chars" in finalize_line, (
+        f"finalize line missing final_code: {finalize_line}"
+    )
+
+    # Clean up
+    close_dependencies(deps)
+
 
 def test_search_command(cli_env: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test the search command with monkeypatched retriever."""
@@ -328,12 +442,22 @@ def test_search_command(cli_env: Settings, monkeypatch: pytest.MonkeyPatch) -> N
     assert "[1] score=0.900" in output
     assert "json.loads" in output
     assert "json.loads(text) parses JSON" in output
-    # Check that -k was passed through (retriever.calls shows the k used)
-    # Our ClosableRetriever doesn't capture k, but we can verify the retriever was called
-    assert len(retriever.calls) == 1
+    # Check that -k was passed through (retriever.retrieve_k shows the k used)
+    assert len(retriever.retrieve_k) == 1
+    assert retriever.retrieve_k[0] == 2, f"expected k=2, got {retriever.retrieve_k[0]}"
 
     # Verify store.close was called once
     retriever.store.close.assert_called_once()
+
+    # Test default k (5) when -k is omitted
+    retriever.retrieve_k.clear()
+    result_default = runner.invoke(cli_module.app, ["search", "parse JSON"])
+    assert result_default.exit_code == 0
+    assert len(retriever.retrieve_k) == 1
+    assert retriever.retrieve_k[0] == 5, f"expected default k=5, got {retriever.retrieve_k[0]}"
+
+    # Verify store.close was called again
+    assert retriever.store.close.call_count == 2
 
     # Test empty results -> exit 1 with ingest hint
     retriever2 = ClosableRetriever(default=[])
@@ -373,7 +497,16 @@ def test_ingest_command(cli_env: Settings, monkeypatch: pytest.MonkeyPatch, tmp_
 
     # Create a real VectorStore with FakeEmbedder in tmp_path
     chroma_dir = tmp_path / "chroma"
-    store = VectorStore(chroma_dir, "test_collection", FakeEmbedder())
+
+    # Wrap the store in a counting subclass/spy whose close() increments a counter
+    close_count = {"count": 0}
+
+    class CountingStore(VectorStore):
+        def close(self) -> None:
+            close_count["count"] += 1
+            super().close()
+
+    store = CountingStore(chroma_dir, "test_collection", FakeEmbedder())
 
     def _fake_build_ingest_store(settings: Settings) -> Any:
         return store
@@ -391,11 +524,10 @@ def test_ingest_command(cli_env: Settings, monkeypatch: pytest.MonkeyPatch, tmp_
     assert "not_a_real_lib_xyz: skipped" in output
     assert "total:" in output
 
-    # Verify store was closed (we can't easily mock close on real VectorStore,
-    # but we can verify the tmp dir is deletable)
-    import shutil
-
-    shutil.rmtree(tmp_path)  # should not raise if store was properly closed
+    # Verify store was closed exactly once
+    assert close_count["count"] == 1, (
+        f"store.close() should be called exactly once, got {close_count['count']} calls"
+    )
 
 
 def test_run_auto_approve_success(
@@ -696,10 +828,12 @@ def test_run_interactive_review_reject_then_approve(
     ]
 
     record: list[dict] = []
+    fake_llm_holder: dict[str, ScriptedLLM] = {}
 
     def _fake_build_deps(s, *, rag, run_id):
         record.append({"rag": rag, "run_id": run_id})
         llm = make_fake_llm(script)
+        fake_llm_holder["llm"] = llm
         return Dependencies(
             llm=llm,
             settings=s,
@@ -721,17 +855,33 @@ def test_run_interactive_review_reject_then_approve(
     assert result.exit_code == 0
     output = result.output
 
-    # Should have two PAUSED/review blocks
-    assert "decision=reject" in output
-    assert "decision=approve" in output
+    # Should have two PAUSED/review blocks (one per pause)
+    assert output.count("HUMAN REVIEW REQUIRED") == 2, (
+        "review should be rendered exactly twice (once per pause)"
+    )
 
     # The revise prompt (llm.calls[1] human message) should contain the feedback
-    # Note: we need to access the LLM from the record
-    # The second call should be to the revise node with the feedback
+    llm = fake_llm_holder["llm"]
+    # Second call is the revise node, should have human feedback in the messages
+    assert len(llm.calls) >= 2, "expected at least 2 LLM calls (generate + revise)"
+    # Check the second call's messages for the feedback text
+    second_call_messages = llm.calls[1]
+    # The feedback should appear in the human message of the revise call
+    feedback_found = any(
+        "add type hints" in str(msg.content)
+        for msg in second_call_messages
+        if hasattr(msg, "content")
+    )
+    assert feedback_found, (
+        "reject feedback 'add type hints' not found in revise prompt "
+        f"messages: {second_call_messages}"
+    )
 
-    # Check that feedback was passed through
-    # The LLM calls are recorded in the script
-    assert len(record) >= 1
+    # Retriever should NOT be called again on human reject (no re-retrieval)
+    # First call was in the initial run, no additional calls on revise
+    assert len(retriever.calls) == 1, (
+        f"retriever should be called only once (initial retrieve), got {len(retriever.calls)} calls"
+    )
 
     # Second run: test blank feedback re-prompt
     docs2 = [make_doc("doc2", "json.loads text", 0.9, "json", "json.loads", "json")]
@@ -871,11 +1021,44 @@ def test_resume_edit_and_resume_errors(
     task_id_paused, retriever_new = create_paused_task(docs_new, script_new)
 
     # Now test no decision option with --no-interactive on the paused task
+    # Record store.close.call_count before and after; assert exactly +1
+    close_before = retriever_new.store.close.call_count
     result_no_decision = runner.invoke(
         cli_module.app, ["resume", task_id_paused, "--no-interactive"]
     )
+    close_after = retriever_new.store.close.call_count
+    assert close_after - close_before == 1, (
+        f"close should be called exactly once, got {close_after - close_before} calls"
+    )
     assert result_no_decision.exit_code == 2  # EXIT_USAGE
     assert "No decision option provided" in result_no_decision.output
+
+    # Test EMPTY edit file case on a paused task
+    # Create another paused task
+    docs_empty = [make_doc("doc_empty", "json.loads text", 0.9, "json", "json.loads", "json")]
+    script_empty = [
+        bundle_text(
+            "def add(a, b):\n    return a + b", "def test_add():\n    assert add(1, 2) == 3"
+        )
+    ]
+    task_id_empty, retriever_empty = create_paused_task(docs_empty, script_empty)
+
+    empty_file = tmp_path / "empty_edit.py"
+    empty_file.write_text("", encoding="utf-8")
+    close_before_empty = retriever_empty.store.close.call_count
+    result_empty = runner.invoke(
+        cli_module.app, ["resume", task_id_empty, "--edit-file", str(empty_file)]
+    )
+    close_after_empty = retriever_empty.store.close.call_count
+    assert close_after_empty - close_before_empty == 1, (
+        "close should be called exactly once for empty edit, "
+        f"got {close_after_empty - close_before_empty} calls"
+    )
+    assert result_empty.exit_code == 1, (
+        f"expected exit 1 for empty edit file, got {result_empty.exit_code}"
+    )
+    assert "Edit file is empty" in result_empty.output
+    assert "Cannot read --edit-file" not in result_empty.output
 
     # Test resume RAG-on run whose resume seam returns deps with retriever None
 
@@ -924,6 +1107,8 @@ def test_resume_edit_and_resume_errors(
     result5 = runner.invoke(cli_module.app, ["resume", task_id2, "--approve"])
     assert result5.exit_code == 4  # EXIT_CONFIG
     assert "topology" in result5.output
+    # The retriever=None deps need no close - should not raise any exception
+    # (close_dependencies handles retriever=None gracefully)
 
     # Test resume seam is called with rag=True for RAG-on paused run
     # and rag=False for RAG-off paused run

@@ -1,0 +1,42 @@
+id: sqlite_top_customers
+title: Top customers using in-memory SQLite
+libraries: [sqlite3]
+difficulty: 2
+task: |
+  Write a function `top_customers(orders: list[tuple[str, float]], n: int) -> list[tuple[str, float]]`
+  that uses an in-memory SQLite database to find the top `n` customers by total order amount.
+  Use parameterized queries. Group by customer name, sum amounts, order by total descending,
+  then by name ascending for ties. Return list of (name, total) tuples.
+tests: |
+  from solution import top_customers
+
+  def test_basic():
+      orders = [("Alice", 100.0), ("Bob", 50.0), ("Alice", 25.0)]
+      assert top_customers(orders, 2) == [("Alice", 125.0), ("Bob", 50.0)]
+
+  def test_ties_broken_by_name():
+      orders = [("Bob", 100.0), ("Alice", 100.0)]
+      assert top_customers(orders, 2) == [("Alice", 100.0), ("Bob", 100.0)]
+
+  def test_n_larger_than_customers():
+      orders = [("Alice", 100.0)]
+      assert top_customers(orders, 5) == [("Alice", 100.0)]
+
+  def test_empty_orders():
+      assert top_customers([], 3) == []
+
+  def test_multiple_orders_same_customer():
+      orders = [("Alice", 10.0), ("Alice", 20.0), ("Alice", 30.0), ("Bob", 50.0)]
+      assert top_customers(orders, 2) == [("Alice", 60.0), ("Bob", 50.0)]
+reference: |
+  import sqlite3
+
+  def top_customers(orders: list[tuple[str, float]], n: int) -> list[tuple[str, float]]:
+      conn = sqlite3.connect(":memory:")
+      conn.execute("CREATE TABLE orders (name TEXT, amount REAL)")
+      conn.executemany("INSERT INTO orders (name, amount) VALUES (?, ?)", orders)
+      cursor = conn.execute(
+          "SELECT name, SUM(amount) as total FROM orders GROUP BY name ORDER BY total DESC, name ASC LIMIT ?",
+          (n,),
+      )
+      return [(row[0], row[1]) for row in cursor.fetchall()]
