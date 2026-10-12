@@ -7,8 +7,6 @@ import sys
 import tempfile
 import time
 
-import pytest
-
 from evalcode.sandbox.errors import (
     C_ASSERTION_FAILURE,
     C_IMPORT_ERROR,
@@ -250,7 +248,44 @@ def test_sandbox_no_tests_collected():
     assert result["tests_total"] == 0, f"tests_total={result['tests_total']}"
 
 
-@pytest.mark.skipif(sys.platform == "linux", reason="run on linux only")
-def test_sandbox_memory_limit_skipped_on_non_linux():
-    # Memory-limit test only meaningful on Linux (rlimit AS). Skip elsewhere.
-    pass
+def test_sandbox_applies_address_space_rlimit_on_posix():
+    """
+    Verify that run_in_sandbox applies RLIMIT_AS on POSIX.
+
+    On Windows, rlimits are skipped (wall-clock timeout only); the test asserts
+    the sandbox call succeeds with mem_mb=256.
+    On POSIX, the sandboxed test imports resource and asserts the soft/hard
+    limits match mem_mb * 1024 * 1024 * 2 (as set in runner.py lines 227-229).
+    """
+    import sys
+
+    # Code under test: simple add function
+    code = PASSING_CODE
+    # runner.py sets RLIMIT_AS to (mem_mb * 1024 * 1024 * 2, mem_mb * 1024 * 1024 * 2)
+    expected_limit = 256 * 1024 * 1024 * 2
+
+    if sys.platform == "win32":
+        # On Windows, rlimits are not applied; use simple tests without resource check
+        tests = PASSING_TESTS
+    else:
+        # On POSIX, verify the RLIMIT_AS value inside the sandbox
+        # Use {{soft}} and {{hard}} so they appear as f-string placeholders in the
+        # generated test code, while {expected_limit} is interpolated now.
+        tests = f"""import resource
+from solution import add
+
+def check_rlimit_as():
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    assert soft == {expected_limit}, f"soft={{soft}} expected={expected_limit}"
+    assert hard == {expected_limit}, f"hard={{hard}} expected={expected_limit}"
+    assert add(1, 2) == 3
+"""
+
+    result = run_in_sandbox(code, tests, timeout_s=10.0, mem_mb=256)
+
+    # On all platforms, the sandbox call should succeed
+    assert result["passed"] is True, f"passed={result['passed']}, category={result['category']}"
+    assert result["category"] == "pass", f"category={result['category']}"
+    assert result["exit_code"] == 0
+    # Invariant: passed == (category == "pass" and exit_code == 0)
+    assert result["passed"] == (result["category"] == "pass" and result["exit_code"] == 0)

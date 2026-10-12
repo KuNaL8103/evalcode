@@ -10,24 +10,31 @@ The graph executes these nodes in a loop until the solution passes, hits the ret
 
 ```mermaid
 flowchart TD
-    START --> RETRIEVE
-    RETRIEVE --> GENERATE
-    GENERATE --> RUN_TESTS
-    RUN_TESTS -->|pass| FINALIZE
-    RUN_TESTS -->|fail| ANALYZE_ERROR
-    ANALYZE_ERROR -->|needs_docs| RETRIEVE
-    ANALYZE_ERROR -->|no_docs| REVISE
-    REVISE --> RUN_TESTS
-    FINALIZE -->|auto_approve| END
-    FINALIZE -->|!auto_approve| HUMAN_REVIEW
-    HUMAN_REVIEW -->|approve| END
-    HUMAN_REVIEW -->|reject| REVISE
-    HUMAN_REVIEW -->|edit| FINALIZE
+    START_RAG[START (RAG on)] --> RETRIEVE
+    START_NORAG[START (RAG off)] --> GENERATE
+    RETRIEVE -->|first pass| GENERATE
+    RETRIEVE -->|re-retrieval| REVISE
+    GENERATE -->|llm ok| RUN_TESTS
+    GENERATE -->|llm error| FAIL
+    REVISE -->|llm ok| RUN_TESTS
+    REVISE -->|llm error| FAIL
+    RUN_TESTS -->|pass, auto_approve| FINALIZE
+    RUN_TESTS -->|pass, !auto_approve| HUMAN_REVIEW
+    RUN_TESTS -->|fail, retries left| ANALYZE_ERROR
+    RUN_TESTS -->|fail, no retries| FAIL
+    ANALYZE_ERROR -->|needs_docs, fresh queries| RETRIEVE
+    ANALYZE_ERROR -->|no docs needed| REVISE
+    HUMAN_REVIEW -->|approve| FINALIZE
+    HUMAN_REVIEW -->|edit| RUN_TESTS
+    HUMAN_REVIEW -->|reject, rounds left| REVISE
+    HUMAN_REVIEW -->|reject, no rounds| FAIL
+    FINALIZE --> END
+    FAIL --> END
 ```
 
 Key properties:
 - Tagged-text output protocol: LLM emits `<code>...</code>` and `<tests>...</tests>` blocks; parser is fault-tolerant.
-- Bounded retries: MAX_RETRIES (default 3) with exponential backoff and per-run LLM call budget.
+- Bounded retries: MAX_RETRIES (default 3) bounds generate→test→revise cycles; exponential backoff and the per-run call budget (MAX_LLM_CALLS_PER_RUN) are separate mechanisms.
 - Error-driven re-retrieval: on failure, analyze_error may trigger a second retrieve with error context.
 - Human review interrupt: approve / reject (with feedback) / edit (provide edited file); state checkpointed in SQLite.
 - SQLite checkpointer enables resume across processes; logs append under `logs/<task_id>/`.
@@ -37,10 +44,16 @@ Key properties:
 
 - Python 3.11+
 - Create and activate a virtual environment:
-  ```bash
-  python -m venv .venv
-  .venv\Scripts\activate
-  ```
+  - Linux/macOS:
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate
+    ```
+  - Windows PowerShell:
+    ```powershell
+    python -m venv .venv
+    .venv\Scripts\Activate.ps1
+    ```
 - Install dependencies:
   ```bash
   pip install -e ".[dev,corpus]"
@@ -49,6 +62,9 @@ Key properties:
   ```bash
   pip install torch --index-url https://download.pytorch.org/whl/cpu
   ```
+- Copy `.env.example` to `.env` and set `GEMINI_API_KEY`:
+  - Linux/macOS: `cp .env.example .env`
+  - Windows PowerShell: `copy .env.example .env`
 - First run downloads the MiniLM embedding model (~90 MB).
 
 ## Gemini setup and free-tier guidance
@@ -64,17 +80,17 @@ Key properties:
    Note: "inkling" models return 403 for plain API-key clients; do not use them as `LLM_MODEL`.
 
 Free-tier design:
-- Throttle: `LLM_MIN_INTERVAL_S` (default 1.2 s) between calls.
+- Throttle: `LLM_MIN_INTERVAL_S` (default 3.0 s) between calls.
 - Exponential backoff with `Retry-After` header support.
 - `DailyQuotaExceeded` fails fast (CLI exit code 3).
-- `MAX_LLM_CALLS_PER_RUN` (default 30) bounds per-run cost.
+- `MAX_LLM_CALLS_PER_RUN` (default 10) bounds per-run cost.
 - Optional LLM calls (`ANALYZE_WITH_LLM`, `QUERY_REWRITE_WITH_LLM`) are off by default.
 - Evaluation is resumable with `--limit`.
 
 Default values from `.env.example`:
 - `LLM_MODEL=gemini-3.5-flash-lite`
-- `LLM_MIN_INTERVAL_S=1.2`
-- `MAX_LLM_CALLS_PER_RUN=30`
+- `LLM_MIN_INTERVAL_S=3.0`
+- `MAX_LLM_CALLS_PER_RUN=10`
 - `MAX_RETRIES=3`
 - `ANALYZE_WITH_LLM=false`
 - `QUERY_REWRITE_WITH_LLM=false`
@@ -125,19 +141,19 @@ Resume works across processes: the task id is printed as `TASK_ID`, state lives 
 |----------|---------|-------------|
 | `GEMINI_API_KEY` | (required) | Gemini API key from AI Studio |
 | `LLM_MODEL` | `gemini-3.5-flash-lite` | Model name |
-| `LLM_MIN_INTERVAL_S` | `1.2` | Minimum seconds between LLM calls |
-| `MAX_LLM_CALLS_PER_RUN` | `30` | Per-run call budget |
+| `LLM_MIN_INTERVAL_S` | `3.0` | Minimum seconds between LLM calls |
+| `MAX_LLM_CALLS_PER_RUN` | `10` | Per-run call budget |
 | `MAX_RETRIES` | `3` | Max generate→test→revise cycles |
 | `ANALYZE_WITH_LLM` | `false` | Use LLM for error analysis |
 | `QUERY_REWRITE_WITH_LLM` | `false` | Use LLM to rewrite retrieval queries |
-| `SANDBOX_TIMEOUT_S` | `30` | Subprocess timeout |
-| `SANDBOX_MEM_MB` | `512` | Memory limit (POSIX rlimit) |
+| `SANDBOX_TIMEOUT_S` | `10` | Subprocess timeout |
+| `SANDBOX_MEM_MB` | `1024` | Memory limit passed to the sandbox (applied as an address-space rlimit on POSIX; ignored on Windows) |
 | `RETRIEVAL_TOP_K` | `5` | Docs per query |
-| `RETRIEVAL_MIN_SCORE` | `0.3` | Minimum similarity score |
-| `CHECKPOINT_DB` | `checkpoints.sqlite` | SQLite checkpoint path |
+| `RETRIEVAL_MIN_SCORE` | `0.2` | Minimum similarity score |
+| `CHECKPOINT_DB` | `data/checkpoints.sqlite` | SQLite checkpoint path |
 | `LOG_DIR` | `logs` | Log directory |
 | `CHROMA_DIR` | `data/chroma` | Vector store path |
-| `DOC_LIBRARIES` | `json,re,pathlib,...` | Default libraries to ingest |
+| `DOC_LIBRARIES` | `json,re,datetime,collections,itertools,pathlib,dataclasses,csv,sqlite3,argparse,pandas,numpy` | Default libraries to ingest |
 
 See `.env.example` for the full list. No secrets in the repo.
 
@@ -169,6 +185,7 @@ evalcode eval --report-only
 - Resumability via per-(task,mode) result files in `eval/results/raw/`.
 - Quota/auth stop writes no result for the interrupted run.
 - Exit code 3 on quota exhaustion.
+- RAG mode requires an index; run `evalcode ingest` first, or use `--modes norag` to skip retrieval.
 
 ### Results (copied from `eval/results/report.md`)
 
@@ -226,6 +243,8 @@ pytest -m live -q
 ruff check .
 ruff format --check .
 ```
+
+CI runs on ubuntu (3.11, 3.13) and windows (3.13); the Linux sandbox path is verified only by CI.
 
 Project layout:
 ```

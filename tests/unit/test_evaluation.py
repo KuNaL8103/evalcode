@@ -1060,13 +1060,16 @@ def test_eval_cli_and_verify_references(
     # store.close should be called exactly once for the single rag run
     assert retriever_close_test.store.close.call_count == 1
 
-    # Also test --modes norag does not close a retriever it never received
-    retriever_norag = ClosableRetriever(
-        default=[make_doc("doc1", "json.loads parses JSON", 0.9, "json", "json.loads", "json")]
-    )
+    # Also test --modes norag: record the rag flag passed to the seam,
+    # assert it is [False], exit code 0, and returned Dependencies has retriever None.
+    recorded_rag_flags: list[bool] = []
+    returned_deps: list[Dependencies] = []
 
     def fake_build_eval_deps_norag(settings: Settings, *, rag: bool) -> Dependencies:
-        return make_deps(settings, script, sandbox=sandbox, retriever=None)
+        recorded_rag_flags.append(rag)
+        deps = make_deps(settings, script, sandbox=sandbox, retriever=None)
+        returned_deps.append(deps)
+        return deps
 
     monkeypatch.setattr(cli_module, "_build_eval_deps", fake_build_eval_deps_norag)
     out_dir_norag = tmp_path / "eval_out_norag"
@@ -1085,9 +1088,11 @@ def test_eval_cli_and_verify_references(
         ],
     )
     assert result_norag.exit_code == 0
-    # No retriever was passed, so no close should be called
-    # (retriever_norag.store.close is a MagicMock but we never use it)
-    assert retriever_norag.store.close.call_count == 0
+    # The seam should have been called once with rag=False
+    assert recorded_rag_flags == [False]
+    # The returned Dependencies should have retriever None
+    assert len(returned_deps) == 1
+    assert returned_deps[0].retriever is None
 
     # --modes rag with retriever None -> exit 4 with ingest hint
     def fake_no_retriever(settings: Settings, *, rag: bool):
