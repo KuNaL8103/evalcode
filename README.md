@@ -10,24 +10,24 @@ The graph executes these nodes in a loop until the solution passes, hits the ret
 
 ```mermaid
 flowchart TD
-    START_RAG[START (RAG on)] --> RETRIEVE
-    START_NORAG[START (RAG off)] --> GENERATE
+    START_RAG["START with RAG"] --> RETRIEVE
+    START_NORAG["START without RAG"] --> GENERATE
     RETRIEVE -->|first pass| GENERATE
     RETRIEVE -->|re-retrieval| REVISE
     GENERATE -->|llm ok| RUN_TESTS
     GENERATE -->|llm error| FAIL
     REVISE -->|llm ok| RUN_TESTS
     REVISE -->|llm error| FAIL
-    RUN_TESTS -->|pass, auto_approve| FINALIZE
-    RUN_TESTS -->|pass, !auto_approve| HUMAN_REVIEW
-    RUN_TESTS -->|fail, retries left| ANALYZE_ERROR
-    RUN_TESTS -->|fail, no retries| FAIL
-    ANALYZE_ERROR -->|needs_docs, fresh queries| RETRIEVE
+    RUN_TESTS -->|pass and auto_approve| FINALIZE
+    RUN_TESTS -->|pass and not auto_approve| HUMAN_REVIEW
+    RUN_TESTS -->|fail and retries left| ANALYZE_ERROR
+    RUN_TESTS -->|fail and no retries left| FAIL
+    ANALYZE_ERROR -->|needs_docs and fresh queries| RETRIEVE
     ANALYZE_ERROR -->|no docs needed| REVISE
     HUMAN_REVIEW -->|approve| FINALIZE
     HUMAN_REVIEW -->|edit| RUN_TESTS
-    HUMAN_REVIEW -->|reject, rounds left| REVISE
-    HUMAN_REVIEW -->|reject, no rounds| FAIL
+    HUMAN_REVIEW -->|reject and rounds left| REVISE
+    HUMAN_REVIEW -->|reject and no rounds left| FAIL
     FINALIZE --> END
     FAIL --> END
 ```

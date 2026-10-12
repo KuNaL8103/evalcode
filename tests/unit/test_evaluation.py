@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -15,6 +16,16 @@ from evalcode.graph import Dependencies
 from evalcode.observability import build_logger
 from evalcode.rag.types import RetrievedDoc
 from tests.fakes import FakeRetriever, ScriptedLLM, bundle_text, make_doc
+
+# Helper to strip ANSI codes and box-drawing chars from CLI output
+# (Typer uses rich rendering when GITHUB_ACTIONS is set)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_BOX_RE = re.compile("[─-╿]")  # box-drawing characters
+
+
+def plain(text: str) -> str:
+    """CLI output without ANSI codes and box borders, whitespace collapsed."""
+    return " ".join(_BOX_RE.sub(" ", _ANSI_RE.sub("", text)).split())
 
 
 class FakeSandboxFail:
@@ -984,7 +995,7 @@ def test_eval_cli_and_verify_references(
         cli_module.app, ["eval", "--verify-refs", "--tasks-dir", str(tasks_dir)]
     )
     assert result2.exit_code == 1
-    assert "FAIL" in result2.output
+    assert "FAIL" in plain(result2.output)
 
     # --modes bogus -> exit 2
     monkeypatch.setattr(cli_module, "_eval_sandbox", fake_eval_sandbox)
@@ -992,12 +1003,12 @@ def test_eval_cli_and_verify_references(
         cli_module.app, ["eval", "--modes", "bogus", "--tasks-dir", str(tasks_dir)]
     )
     assert result3.exit_code == 2
-    assert "Invalid mode" in result3.output
+    assert "Invalid mode" in plain(result3.output)
 
     # --limit 0 -> exit 2
     result4 = runner.invoke(cli_module.app, ["eval", "--limit", "0", "--tasks-dir", str(tasks_dir)])
     assert result4.exit_code == 2
-    assert "limit must be >= 1" in result4.output
+    assert "limit must be >= 1" in plain(result4.output)
 
     # --report-only on empty out dir -> exit 1
     empty_out = tmp_path / "empty_out"
@@ -1006,7 +1017,7 @@ def test_eval_cli_and_verify_references(
         ["eval", "--report-only", "--out", str(empty_out), "--tasks-dir", str(tasks_dir)],
     )
     assert result5.exit_code == 1
-    assert "no results in" in result5.output
+    assert "no results in" in plain(result5.output)
 
     # --modes norag --limit 1 -> exit 0, report.md exists
     out_dir = tmp_path / "eval_out"
@@ -1112,7 +1123,8 @@ def test_eval_cli_and_verify_references(
         ],
     )
     assert result7.exit_code == 4
-    assert "needs an index" in result7.output.lower() or "ingest" in result7.output.lower()
+    out7 = plain(result7.output).lower()
+    assert "needs an index" in out7 or "ingest" in out7
 
     # store.close called exactly once per normal run
     # (verifiable by checking retriever.store.close.call_count after runs)
@@ -1120,12 +1132,12 @@ def test_eval_cli_and_verify_references(
     # "eval --help" lists the options
     result_help = runner.invoke(cli_module.app, ["eval", "--help"])
     assert result_help.exit_code == 0
-    assert "--modes" in result_help.output
-    assert "--limit" in result_help.output
-    assert "--verify-refs" in result_help.output
-    assert "--report-only" in result_help.output
+    assert "--modes" in plain(result_help.output)
+    assert "--limit" in plain(result_help.output)
+    assert "--verify-refs" in plain(result_help.output)
+    assert "--report-only" in plain(result_help.output)
 
     # app "--help" lists eval
     result_app_help = runner.invoke(cli_module.app, ["--help"])
     assert result_app_help.exit_code == 0
-    assert "eval" in result_app_help.output
+    assert "eval" in plain(result_app_help.output)

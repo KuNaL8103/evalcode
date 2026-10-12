@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -14,6 +15,17 @@ from evalcode.graph import Dependencies
 from evalcode.observability import build_logger
 from evalcode.rag.types import RetrievedDoc
 from tests.fakes import FakeRetriever, ScriptedLLM, bundle_text, make_doc
+
+# Helper to strip ANSI codes and box-drawing chars from CLI output
+# (Typer uses rich rendering when GITHUB_ACTIONS is set)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_BOX_RE = re.compile("[─-╿]")  # box-drawing characters
+
+
+def plain(text: str) -> str:
+    """CLI output without ANSI codes and box borders, whitespace collapsed."""
+    return " ".join(_BOX_RE.sub(" ", _ANSI_RE.sub("", text)).split())
+
 
 # --------------------------------------------------------------------------- #
 # Fixtures and helpers
@@ -1034,7 +1046,7 @@ def test_resume_edit_and_resume_errors(
         f"close should be called exactly once, got {close_after - close_before} calls"
     )
     assert result_no_decision.exit_code == 2  # EXIT_USAGE
-    assert "No decision option provided" in result_no_decision.output
+    assert "No decision option provided" in plain(result_no_decision.output)
 
     # Test EMPTY edit file case on a paused task
     # Create another paused task
@@ -1280,10 +1292,10 @@ def test_run_options_help_and_entry_point(
     # Test --help lists ingest, search, run, resume
     result_help = runner.invoke(cli_module.app, ["--help"])
     assert result_help.exit_code == 0
-    assert "ingest" in result_help.output
-    assert "search" in result_help.output
-    assert "run" in result_help.output
-    assert "resume" in result_help.output
+    assert "ingest" in plain(result_help.output)
+    assert "search" in plain(result_help.output)
+    assert "run" in plain(result_help.output)
+    assert "resume" in plain(result_help.output)
 
     # Test pyproject.toml has project.scripts["evalcode"] == "evalcode.cli:app"
     pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
