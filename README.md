@@ -463,7 +463,7 @@ comma-separated ids of documentation blocks actually used   # optional
 
 The `run_tests` result stored in state (`RunResult` in `src/evalcode/state.py`):
 
-```python
+```text
 {
     "passed": bool,                    # True iff category == "pass" and exit_code == 0
     "category": "pass" | "syntax_error" | "import_error" | "runtime_error"
@@ -481,7 +481,7 @@ The `run_tests` result stored in state (`RunResult` in `src/evalcode/state.py`):
 
 The human-review resume payload (`src/evalcode/nodes/human_review.py`):
 
-```python
+```text
 {"decision": "approve"}
 {"decision": "reject", "feedback": "add type hints"}   # feedback must be non-empty
 {"decision": "edit",   "code": "<full solution.py text>"}  # code must be non-empty
