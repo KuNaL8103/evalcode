@@ -15,11 +15,11 @@ from dotenv import dotenv_values, find_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import SecretStr
 
-from evalcode.config import Settings
-from evalcode.errors import ParseError
+from evalcode.core.config import Settings
+from evalcode.core.errors import ParseError
 from evalcode.llm import build_llm_client
-from evalcode.parsing import parse_bundle
-from evalcode.prompts import FORMAT_REMINDER, build_generate_messages
+from evalcode.llm.parsing import parse_bundle
+from evalcode.llm.prompts import FORMAT_REMINDER, build_generate_messages
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
@@ -28,7 +28,7 @@ def _read_key() -> str:
     """Real key from the shell env, else the developer's .env (live opt-in only).
 
     The autouse env-isolation fixture strips Settings vars from ``os.environ``
-    and hides the real .env from ``evalcode.config``; a live test deliberately
+    and hides the real .env from ``evalcode.core.config``; a live test deliberately
     opts back in through the raw dotenv helpers.
     """
     key = os.environ.get("GEMINI_API_KEY", "").strip()

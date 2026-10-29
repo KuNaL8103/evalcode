@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from evalcode.config import Settings
+from evalcode.core.config import Settings
+from evalcode.core.observability import build_logger
 from evalcode.graph import Dependencies
-from evalcode.observability import build_logger
-from evalcode.rag.types import RetrievedDoc
+from evalcode.rag.store import RetrievedDoc
 from tests.fakes import FakeRetriever, ScriptedLLM, bundle_text, make_doc
 
 # Helper to strip ANSI codes and box-drawing chars from CLI output
@@ -40,7 +40,7 @@ def cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("CHROMA_DIR", str(tmp_path / "chroma"))
     # Set a fake API key for tests (built at runtime, not as literal)
     monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "x" * 35)
-    from evalcode.config import get_settings
+    from evalcode.core.config import get_settings
 
     get_settings.cache_clear()
     return get_settings()
@@ -649,7 +649,7 @@ def test_run_failure_and_error_exit_codes(
     assert "assertion_failure" in result.output
 
     # Test 2: ScriptedLLM raising DailyQuotaExceeded -> exit 3
-    from evalcode.errors import DailyQuotaExceeded
+    from evalcode.core.errors import DailyQuotaExceeded
 
     record2: list[dict] = []
     quota_error = DailyQuotaExceeded("DailyQuotaExceeded")
@@ -670,7 +670,7 @@ def test_run_failure_and_error_exit_codes(
 
     # Test 3: _build_deps raising ConfigError -> exit 4
     def _fake_build_deps_config_error(s, *, rag, run_id):
-        from evalcode.errors import ConfigError
+        from evalcode.core.errors import ConfigError
 
         raise ConfigError("no key configured")
 

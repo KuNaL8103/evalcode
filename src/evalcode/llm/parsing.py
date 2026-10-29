@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import re
 
-from evalcode.errors import ParseError
+from evalcode.core.errors import ParseError
 from evalcode.llm import strip_reasoning
-from evalcode.schemas import CodeBundle
+from evalcode.llm.schemas import CodeBundle
 
 __all__ = ["parse_bundle", "parse_tagged"]
 

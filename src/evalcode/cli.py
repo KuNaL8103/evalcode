@@ -12,8 +12,8 @@ import typer
 from rich.console import Console
 from rich.syntax import Syntax
 
-from evalcode.config import Settings
-from evalcode.errors import ConfigError
+from evalcode.core.config import Settings
+from evalcode.core.errors import ConfigError
 from evalcode.graph import Dependencies, close_dependencies, pending_review
 from evalcode.state import AgentState
 
@@ -62,7 +62,7 @@ def _console() -> Console:
 
 # Seam functions (monkeypatched in tests)
 def _get_settings() -> Settings:
-    from evalcode.config import get_settings
+    from evalcode.core.config import get_settings
 
     return get_settings()
 
@@ -74,18 +74,26 @@ def _build_deps(settings: Settings, *, rag: bool, run_id: str) -> Any:
 
 
 def _open_checkpointer(path: str | Path) -> Any:
-    from evalcode.persistence import open_checkpointer
+    from evalcode.core.persistence import open_checkpointer
 
     return open_checkpointer(path)
 
 
 def _build_search_retriever(settings: Settings) -> Any:
     from evalcode.rag.embeddings import get_embedder
-    from evalcode.rag.retriever import Retriever
+    from evalcode.rag.retriever import HybridRetriever, Retriever
     from evalcode.rag.store import VectorStore
 
     embedder = get_embedder(settings)
     store = VectorStore(settings.chroma_dir, settings.collection_name, embedder)
+    if settings.hybrid_retrieval:
+        return HybridRetriever(
+            store,
+            settings.retrieval_top_k,
+            settings.retrieval_min_score,
+            rrf_k=settings.rrf_k,
+            adaptive=settings.hybrid_adaptive,
+        )
     return Retriever(store, settings.retrieval_top_k, settings.retrieval_min_score)
 
 
@@ -518,7 +526,7 @@ def _drive(
             secrets.append(settings.gemini_api_key.get_secret_value())
         if settings.langsmith_api_key:
             secrets.append(settings.langsmith_api_key.get_secret_value())
-        from evalcode.observability import redact
+        from evalcode.core.observability import redact
 
         msg = redact(str(e), tuple(secrets))
         console.print(_safe(f"Unexpected error: {type(e).__name__}: {msg}"))
@@ -610,7 +618,7 @@ def run(
             secrets.append(settings.gemini_api_key.get_secret_value())
         if settings.langsmith_api_key:
             secrets.append(settings.langsmith_api_key.get_secret_value())
-        from evalcode.observability import redact
+        from evalcode.core.observability import redact
 
         msg = redact(str(e), tuple(secrets))
         console.print(_safe(f"Unexpected error: {type(e).__name__}: {msg}"))
@@ -896,7 +904,7 @@ def eval_command(
             secrets.append(settings.gemini_api_key.get_secret_value())
         if settings.langsmith_api_key:
             secrets.append(settings.langsmith_api_key.get_secret_value())
-        from evalcode.observability import redact
+        from evalcode.core.observability import redact
 
         msg = redact(str(e), tuple(secrets))
         console.print(_safe(f"Unexpected error: {type(e).__name__}: {msg}"))
@@ -925,7 +933,7 @@ def eval_command(
             secrets.append(settings.gemini_api_key.get_secret_value())
         if settings.langsmith_api_key:
             secrets.append(settings.langsmith_api_key.get_secret_value())
-        from evalcode.observability import redact
+        from evalcode.core.observability import redact
 
         msg = redact(str(e), tuple(secrets))
         console.print(_safe(f"Unexpected error: {type(e).__name__}: {msg}"))
@@ -969,7 +977,7 @@ def _build_eval_deps(settings: Settings, *, rag: bool) -> Dependencies:
 
 
 def _eval_sandbox() -> Callable[[str, str, float, int], dict]:
-    """Return the real sandbox function."""
-    from evalcode.sandbox.runner import run_in_sandbox
+    """Return the configured sandbox function (subprocess or Docker)."""
+    from evalcode.sandbox.docker import build_sandbox
 
-    return run_in_sandbox
+    return build_sandbox(_get_settings())

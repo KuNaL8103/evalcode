@@ -15,11 +15,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol
 
-from evalcode.config import Settings
+from evalcode.core.config import Settings
 from evalcode.llm import TextLLM
-from evalcode.parsing import parse_tagged
-from evalcode.prompts import build_rewrite_messages
-from evalcode.rag.types import RetrievedDoc
+from evalcode.llm.parsing import parse_tagged
+from evalcode.llm.prompts import build_rewrite_messages
+from evalcode.rag.store import RetrievedDoc
 from evalcode.state import AgentState, utc_now_iso
 
 __all__ = ["RetrieverLike", "make_retrieve_node"]

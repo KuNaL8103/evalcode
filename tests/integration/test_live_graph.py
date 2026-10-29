@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from evalcode.config import Settings, get_settings
+from evalcode.core.config import Settings, get_settings
 from evalcode.graph import default_dependencies, run_task
 
 

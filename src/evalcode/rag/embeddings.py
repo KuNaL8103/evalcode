@@ -14,7 +14,7 @@ import math
 import re
 from typing import Protocol, runtime_checkable
 
-from evalcode.config import Settings
+from evalcode.core.config import Settings
 
 __all__ = ["Embedder", "FakeEmbedder", "HFEmbedder", "get_embedder"]
 

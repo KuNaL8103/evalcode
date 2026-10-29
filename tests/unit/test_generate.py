@@ -11,17 +11,17 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from evalcode.config import Settings
-from evalcode.errors import DailyQuotaExceeded, ParseError
-from evalcode.nodes.generate import make_generate_node
-from evalcode.parsing import parse_bundle, parse_tagged
-from evalcode.prompts import (
+from evalcode.core.config import Settings
+from evalcode.core.errors import DailyQuotaExceeded, ParseError
+from evalcode.llm.parsing import parse_bundle, parse_tagged
+from evalcode.llm.prompts import (
     FORMAT_REMINDER,
     GENERATE_SYSTEM,
     build_generate_messages,
     format_context,
 )
-from evalcode.schemas import CodeBundle, extract_imports
+from evalcode.llm.schemas import CodeBundle, extract_imports
+from evalcode.nodes import make_generate_node
 from tests.fakes import ScriptedLLM, bundle_text
 
 CODE = 'import math\n\n\ndef add(a, b):\n    """Return a + b."""\n    return a + b\n'

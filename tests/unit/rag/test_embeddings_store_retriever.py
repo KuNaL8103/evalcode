@@ -15,12 +15,11 @@ from pathlib import Path
 import pytest
 
 import evalcode.rag.embeddings as embeddings_mod
-from evalcode.config import get_settings
+from evalcode.core.config import get_settings
 from evalcode.rag.embeddings import FakeEmbedder, HFEmbedder, get_embedder
 from evalcode.rag.ingest import ingest
 from evalcode.rag.retriever import Retriever
-from evalcode.rag.store import VectorStore
-from evalcode.rag.types import DocChunk
+from evalcode.rag.store import DocChunk, VectorStore
 
 
 def _chunk(id: str, text: str, library: str, embed_text: str | None = None) -> DocChunk:

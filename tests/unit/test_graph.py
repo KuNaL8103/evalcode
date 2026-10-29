@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from evalcode.config import Settings
-from evalcode.errors import DailyQuotaExceeded
+from evalcode.core.config import Settings
+from evalcode.core.errors import DailyQuotaExceeded
 from evalcode.graph import (
     Dependencies,
     build_graph,
@@ -424,7 +424,7 @@ def test_route_after_human_and_review_routing():
 
 
 def test_apply_human_decision():
-    from evalcode.nodes.human_review import apply_human_decision
+    from evalcode.nodes import apply_human_decision
 
     base_state = {
         "attempt": 1,
@@ -766,7 +766,7 @@ def test_reject_exhausts_human_rounds():
 
 
 def test_sqlite_persistence_across_rebuilt_graphs(tmp_path):
-    from evalcode.persistence import open_checkpointer
+    from evalcode.core.persistence import open_checkpointer
 
     llm = ScriptedLLM([bundle_text(CODE, TESTS, explanation="first")])
     sandbox_calls = {"count": 0}
@@ -1141,7 +1141,7 @@ def test_build_retriever_fallbacks(tmp_path):
     )
     embedder2 = FakeEmbedder(dim=64)
     store2 = VectorStore(populated_dir, "test", embedder2)
-    from evalcode.rag.types import DocChunk
+    from evalcode.rag.store import DocChunk
 
     chunk = DocChunk(
         id="c1",

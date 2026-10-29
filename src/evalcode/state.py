@@ -11,7 +11,7 @@ import operator
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, TypedDict
 
-from evalcode.rag.types import RetrievedDoc
+from evalcode.rag.store import RetrievedDoc
 
 __all__ = [
     "AgentState",
@@ -105,7 +105,7 @@ class AgentState(TypedDict, total=False):
     # feedback
     run_result: RunResult | None
     error_analysis: ErrorAnalysis | None
-    human_decision: Literal["approve", "reject", "edit"] | None
+    human_decision: Literal["approve", "reject", "reject_final", "edit"] | None
     human_feedback: str | None
     # outcome
     status: Literal["running", "awaiting_review", "approved", "failed"]

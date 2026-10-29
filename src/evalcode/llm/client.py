@@ -26,8 +26,8 @@ from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
-from evalcode.config import Settings, get_settings
-from evalcode.errors import (
+from evalcode.core.config import Settings, get_settings
+from evalcode.core.errors import (
     DailyQuotaExceeded,
     EmptyResponseError,
     LLMAuthError,

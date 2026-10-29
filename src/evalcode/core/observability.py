@@ -26,7 +26,7 @@ from typing import Any
 
 from langgraph.errors import GraphInterrupt
 
-from evalcode.config import Settings
+from evalcode.core.config import Settings
 from evalcode.state import AgentState, merge_usage, utc_now_iso
 
 __all__ = [

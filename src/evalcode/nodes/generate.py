@@ -19,12 +19,12 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from evalcode.config import Settings
-from evalcode.errors import LLMError, ParseError
+from evalcode.core.config import Settings
+from evalcode.core.errors import LLMError, ParseError
 from evalcode.llm import TextLLM
-from evalcode.parsing import parse_bundle
-from evalcode.prompts import FORMAT_REMINDER, build_generate_messages
-from evalcode.schemas import CodeBundle, extract_imports
+from evalcode.llm.parsing import parse_bundle
+from evalcode.llm.prompts import FORMAT_REMINDER, build_generate_messages
+from evalcode.llm.schemas import CodeBundle, extract_imports
 from evalcode.state import AgentState, TokenUsage, merge_usage, utc_now_iso
 
 __all__ = ["make_generate_node"]

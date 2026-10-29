@@ -12,7 +12,7 @@ from __future__ import annotations
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from evalcode.analysis import extract_exception
-from evalcode.rag.types import RetrievedDoc
+from evalcode.rag.store import RetrievedDoc
 from evalcode.state import AgentState
 
 __all__ = [

@@ -5,9 +5,9 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from evalcode.config import Settings
-from evalcode.errors import DailyQuotaExceeded
-from evalcode.nodes.revise import make_revise_node
+from evalcode.core.config import Settings
+from evalcode.core.errors import DailyQuotaExceeded
+from evalcode.nodes import make_revise_node
 from tests.fakes import ScriptedLLM, bundle_text
 
 CODE_V1 = "def add(a, b):\n    return a + b\n"
@@ -279,8 +279,8 @@ def test_revise_failure_paths() -> None:
 
 def test_revise_prompt_contents_and_bounds() -> None:
     """Build prompt with long content and verify bounds and sections."""
-    from evalcode.nodes.analyze_error import make_analyze_error_node
-    from evalcode.prompts import build_revise_messages
+    from evalcode.llm.prompts import build_revise_messages
+    from evalcode.nodes import make_analyze_error_node
 
     # INTERNAL blank lines (">1500 chars"): "\n\n".join instead of "\n".join
     long_traceback = "\n\n".join(f"line {i}" for i in range(1, 400))

@@ -27,21 +27,25 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from evalcode.config import Settings, get_settings
-from evalcode.llm import TextLLM, build_llm_client
-from evalcode.nodes.analyze_error import make_analyze_error_node
-from evalcode.nodes.generate import make_generate_node
-from evalcode.nodes.human_review import human_review_node
-from evalcode.nodes.retrieve import make_retrieve_node
-from evalcode.nodes.revise import make_revise_node
-from evalcode.nodes.run_tests import make_run_tests_node
-from evalcode.nodes.terminal import fail_node, finalize_node
-from evalcode.observability import (
+from evalcode.core.config import Settings, get_settings
+from evalcode.core.observability import (
     build_logger,
     build_run_config,
     configure_langsmith,
     traced_node,
 )
+from evalcode.llm import TextLLM, build_llm_client
+from evalcode.nodes import (
+    fail_node,
+    finalize_node,
+    human_review_node,
+    make_analyze_error_node,
+    make_generate_node,
+    make_retrieve_node,
+    make_revise_node,
+    make_run_tests_node,
+)
+from evalcode.sandbox.docker import build_sandbox
 from evalcode.sandbox.runner import run_in_sandbox
 from evalcode.state import AgentState
 
@@ -121,7 +125,7 @@ def default_dependencies(
     return Dependencies(
         llm=llm,
         settings=settings,
-        sandbox=run_in_sandbox,
+        sandbox=build_sandbox(settings),
         retriever=retriever,
         logger=logger,
     )
@@ -137,7 +141,7 @@ def build_retriever(settings: Settings, *, embedder: Any = None) -> Any | None:
     All heavy imports (chromadb, sentence-transformers) happen inside this function.
     """
     from evalcode.rag.embeddings import get_embedder
-    from evalcode.rag.retriever import Retriever
+    from evalcode.rag.retriever import HybridRetriever, Retriever
     from evalcode.rag.store import VectorStore
 
     chroma_dir = Path(settings.chroma_dir)
@@ -155,6 +159,14 @@ def build_retriever(settings: Settings, *, embedder: Any = None) -> Any | None:
             logger.warning("Chroma collection %s is empty; RAG disabled", settings.collection_name)
             store.close()
             return None
+        if settings.hybrid_retrieval:
+            return HybridRetriever(
+                store,
+                settings.retrieval_top_k,
+                settings.retrieval_min_score,
+                rrf_k=settings.rrf_k,
+                adaptive=settings.hybrid_adaptive,
+            )
         return Retriever(store, settings.retrieval_top_k, settings.retrieval_min_score)
     except Exception:
         store.close()
@@ -201,6 +213,7 @@ def route_after_human(state: AgentState) -> str:
     - approve -> finalize
     - edit   -> run_tests (re-validate edited code; retry budget unchanged)
     - reject -> revise if human_rounds <= max_human_rounds, else fail
+    - reject_final -> fail immediately
     - anything else -> fail (caller bug)
     """
     decision = state.get("human_decision")
@@ -208,6 +221,8 @@ def route_after_human(state: AgentState) -> str:
         return "finalize"
     if decision == "edit":
         return "run_tests"
+    if decision == "reject_final":
+        return "fail"
     if decision == "reject":
         human_rounds = state.get("human_rounds", 0)
         max_human_rounds = state.get("max_human_rounds", 2)

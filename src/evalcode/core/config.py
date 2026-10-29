@@ -14,13 +14,13 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from dotenv import find_dotenv, load_dotenv
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from evalcode.errors import ConfigError
+from evalcode.core.errors import ConfigError
 
 __all__ = ["Settings", "get_settings", "load_settings"]
 
@@ -78,11 +78,22 @@ class Settings(BaseSettings):
     # --- Sandbox ---
     sandbox_timeout_s: int = Field(default=10, gt=0)
     sandbox_mem_mb: int = Field(default=1024, gt=0)
+    # "subprocess" (default) or "docker". Docker falls back to subprocess
+    # automatically when the daemon/image is unavailable.
+    sandbox_backend: Literal["subprocess", "docker"] = "subprocess"
+    docker_image: str = "evalcode-sandbox:latest"
+    docker_memory_mb: int = Field(default=256, gt=0)
+    docker_cpus: float = Field(default=0.5, gt=0)
 
     # --- Retrieval ---
     retrieval_top_k: int = Field(default=5, gt=0)
     retrieval_max_docs: int = Field(default=8, gt=0)
     retrieval_min_score: float = Field(default=0.2, ge=0, le=1)
+    # Dense (MiniLM) + BM25 fusion via Reciprocal Rank Fusion.
+    hybrid_retrieval: bool = True
+    # Fuse BM25 only for symbol-like queries; False = fuse every query.
+    hybrid_adaptive: bool = True
+    rrf_k: int = Field(default=60, gt=0)
     context_max_chars: int = Field(default=6000, gt=0)
     analyze_with_llm: bool = False
     query_rewrite_with_llm: bool = False

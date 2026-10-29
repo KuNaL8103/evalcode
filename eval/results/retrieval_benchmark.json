@@ -1,0 +1,218 @@
+{
+  "libs": [
+    "json",
+    "re",
+    "collections",
+    "datetime",
+    "pathlib"
+  ],
+  "chunks": 438,
+  "k": 20,
+  "rrf_k": 60,
+  "adaptive": true,
+  "bm25_index_build_ms": 46.81,
+  "dense": {
+    "overall": {
+      "n": 20,
+      "hit_at_1": 0.6,
+      "hit_at_5": 0.85,
+      "hit_at_10": 0.95,
+      "mrr": 0.73,
+      "mean_rank_found": 2.55
+    },
+    "natural": {
+      "n": 10,
+      "hit_at_1": 0.4,
+      "hit_at_5": 0.8,
+      "hit_at_10": 1.0,
+      "mrr": 0.633,
+      "mean_rank_found": 2.4
+    },
+    "exact": {
+      "n": 10,
+      "hit_at_1": 0.8,
+      "hit_at_5": 0.9,
+      "hit_at_10": 0.9,
+      "mrr": 0.827,
+      "mean_rank_found": 2.7
+    },
+    "latency": {
+      "samples": 60,
+      "mean_ms": 23.86,
+      "p95_ms": 25.63
+    }
+  },
+  "hybrid": {
+    "overall": {
+      "n": 20,
+      "hit_at_1": 0.6,
+      "hit_at_5": 0.85,
+      "hit_at_10": 1.0,
+      "mrr": 0.74,
+      "mean_rank_found": 2.15
+    },
+    "natural": {
+      "n": 10,
+      "hit_at_1": 0.4,
+      "hit_at_5": 0.8,
+      "hit_at_10": 1.0,
+      "mrr": 0.633,
+      "mean_rank_found": 2.4
+    },
+    "exact": {
+      "n": 10,
+      "hit_at_1": 0.8,
+      "hit_at_5": 0.9,
+      "hit_at_10": 1.0,
+      "mrr": 0.846,
+      "mean_rank_found": 1.9
+    },
+    "latency": {
+      "samples": 60,
+      "mean_ms": 23.37,
+      "p95_ms": 26.03
+    }
+  },
+  "rows": [
+    {
+      "kind": "natural",
+      "query": "parse a JSON string into a Python object",
+      "expected": "json.loads",
+      "dense_rank": 6,
+      "hybrid_rank": 6
+    },
+    {
+      "kind": "natural",
+      "query": "serialize a Python object to a JSON string",
+      "expected": "json.dumps",
+      "dense_rank": 2,
+      "hybrid_rank": 2
+    },
+    {
+      "kind": "natural",
+      "query": "write an object as JSON to a file",
+      "expected": "json.dump",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "natural",
+      "query": "replace all matches of a pattern",
+      "expected": "re.sub",
+      "dense_rank": 2,
+      "hybrid_rank": 2
+    },
+    {
+      "kind": "natural",
+      "query": "find all non-overlapping matches of a regex in a string",
+      "expected": "re.findall",
+      "dense_rank": 2,
+      "hybrid_rank": 2
+    },
+    {
+      "kind": "natural",
+      "query": "split a string by a regular expression",
+      "expected": "re.split",
+      "dense_rank": 2,
+      "hybrid_rank": 2
+    },
+    {
+      "kind": "natural",
+      "query": "count occurrences of items in an iterable",
+      "expected": "collections.Counter",
+      "dense_rank": 6,
+      "hybrid_rank": 6
+    },
+    {
+      "kind": "natural",
+      "query": "double-ended queue with fast appends and pops",
+      "expected": "collections.deque",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "natural",
+      "query": "move a key to the end of an ordered dictionary",
+      "expected": "collections.OrderedDict.move_to_end",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "natural",
+      "query": "dictionary with a default value factory for missing keys",
+      "expected": "collections.defaultdict",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "exact",
+      "query": "json.loads",
+      "expected": "json.loads",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "exact",
+      "query": "json.dumps",
+      "expected": "json.dumps",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "exact",
+      "query": "re.findall",
+      "expected": "re.findall",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "exact",
+      "query": "re.sub",
+      "expected": "re.sub",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "exact",
+      "query": "collections.Counter",
+      "expected": "collections.Counter",
+      "dense_rank": 5,
+      "hybrid_rank": 3
+    },
+    {
+      "kind": "exact",
+      "query": "collections.defaultdict",
+      "expected": "collections.defaultdict",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "exact",
+      "query": "collections.OrderedDict.move_to_end",
+      "expected": "collections.OrderedDict.move_to_end",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "exact",
+      "query": "collections.deque",
+      "expected": "collections.deque",
+      "dense_rank": 14,
+      "hybrid_rank": 8
+    },
+    {
+      "kind": "exact",
+      "query": "datetime.datetime.strptime",
+      "expected": "datetime.datetime.strptime",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    },
+    {
+      "kind": "exact",
+      "query": "pathlib.Path.with_suffix",
+      "expected": "pathlib.Path.with_suffix",
+      "dense_rank": 1,
+      "hybrid_rank": 1
+    }
+  ]
+}

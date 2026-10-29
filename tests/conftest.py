@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import evalcode.config as config_module
-from evalcode.config import Settings, get_settings
+import evalcode.core.config as config_module
+from evalcode.core.config import Settings, get_settings
 
 # Every env var that can feed a Settings field (upper-cased field names).
 _SETTINGS_ENV_VARS = [name.upper() for name in Settings.model_fields]
@@ -28,7 +28,7 @@ def _env_isolation(
     - Removes every Settings-field env var (incl. GEMINI_API_KEY,
       LANGSMITH_*) for the duration of the test.
     - Clears the settings cache before and after the test.
-    - Points ``find_dotenv`` (as ``evalcode.config`` imports it) at a path
+    - Points ``find_dotenv`` (as ``evalcode.core.config`` imports it) at a path
       that does not exist, so the developer's real ``.env`` is never read;
       ``load_dotenv`` tolerates that value (returns False, sets nothing).
 

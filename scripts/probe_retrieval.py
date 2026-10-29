@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--k", type=int, default=20, help="retrieval depth for rank lookup")
     args = parser.parse_args(argv)
 
-    from evalcode.config import get_settings
+    from evalcode.core.config import get_settings
     from evalcode.rag.embeddings import get_embedder
     from evalcode.rag.ingest import ingest
     from evalcode.rag.retriever import Retriever

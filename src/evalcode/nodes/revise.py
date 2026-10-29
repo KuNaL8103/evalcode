@@ -19,11 +19,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from evalcode.config import Settings
-from evalcode.errors import LLMError, ParseError
+from evalcode.core.config import Settings
+from evalcode.core.errors import LLMError, ParseError
 from evalcode.llm import TextLLM
-from evalcode.parsing import parse_bundle
-from evalcode.prompts import FORMAT_REMINDER, build_revise_messages
+from evalcode.llm.parsing import parse_bundle
+from evalcode.llm.prompts import FORMAT_REMINDER, build_revise_messages
 from evalcode.state import AgentState, TokenUsage, merge_usage, utc_now_iso
 
 

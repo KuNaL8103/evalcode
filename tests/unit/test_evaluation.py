@@ -10,11 +10,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from evalcode.config import Settings
+from evalcode.core.config import Settings
+from evalcode.core.observability import build_logger
 from evalcode.evaluation import EvalTask, load_tasks, run_eval
 from evalcode.graph import Dependencies
-from evalcode.observability import build_logger
-from evalcode.rag.types import RetrievedDoc
+from evalcode.rag.store import RetrievedDoc
 from tests.fakes import FakeRetriever, ScriptedLLM, bundle_text, make_doc
 
 # Helper to strip ANSI codes and box-drawing chars from CLI output
@@ -65,7 +65,7 @@ def eval_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("CHROMA_DIR", str(tmp_path / "chroma"))
     monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "x" * 35)
-    from evalcode.config import get_settings
+    from evalcode.core.config import get_settings
 
     get_settings.cache_clear()
     return get_settings()
@@ -201,7 +201,7 @@ def test_task_files_valid_and_loader_rejects_bad_input(
             assert mod not in task.reference, f"{task.id} reference imports {mod}"
             assert mod not in task.tests, f"{task.id} tests imports {mod}"
         # libraries subset of Settings().doc_libraries
-        from evalcode.config import Settings
+        from evalcode.core.config import Settings
 
         settings = Settings()
         for lib in task.libraries:
@@ -517,7 +517,7 @@ def test_run_eval_quota_stop_and_error_isolation(
     eval_env: Settings, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Test quota/auth stop and error isolation in run_eval."""
-    from evalcode.errors import DailyQuotaExceeded, LLMAuthError
+    from evalcode.core.errors import DailyQuotaExceeded, LLMAuthError
     from evalcode.evaluation import run_eval, stop_reason
     from evalcode.state import AgentState
 

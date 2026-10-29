@@ -19,12 +19,16 @@ dependencies = [
     "sentence-transformers",
     "openai",
     "chromadb",
+    "rank_bm25",
     "python-dotenv",
     "pydantic>=2",
     "pydantic-settings",
     "typer",
     "rich",
     "pyyaml",
+    "fastapi",
+    "uvicorn",
+    "streamlit",
 ]
 
 [project.urls]
@@ -35,6 +39,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "ruff",
+    "httpx",
 ]
 corpus = [
     "pandas",

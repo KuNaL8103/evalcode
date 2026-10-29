@@ -16,7 +16,7 @@ from langchain_core.messages import BaseMessage
 from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
 from evalcode.llm import LLMResponse
-from evalcode.rag.types import RetrievedDoc
+from evalcode.rag.store import RetrievedDoc
 from evalcode.state import TokenUsage
 
 # The OpenAI chat-completions endpoint, used only for stub httpx2.Request objects.

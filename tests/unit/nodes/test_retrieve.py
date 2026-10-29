@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from evalcode.config import Settings
-from evalcode.errors import DailyQuotaExceeded
+from evalcode.core.config import Settings
+from evalcode.core.errors import DailyQuotaExceeded
 from evalcode.graph import initial_state
-from evalcode.nodes.retrieve import make_retrieve_node
+from evalcode.nodes import make_retrieve_node
 from tests.fakes import FakeRetriever, ScriptedLLM, make_doc
 
 

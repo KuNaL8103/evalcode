@@ -35,6 +35,9 @@ def apply_human_decision(state: AgentState, response: Any) -> dict[str, Any]:
       ``human_decision="reject"``, ``human_feedback=feedback``, increments
       ``human_rounds``, and adds a history event. If the new ``human_rounds`` exceeds
       ``max_human_rounds``, also returns a ``failure_reason``.
+    - ``"reject_final"``: terminal rejection with mandatory non-empty ``"feedback"``.
+      Returns ``human_decision="reject_final"`` and a ``failure_reason``; the
+      router sends the run to ``fail`` instead of revising.
     - ``"edit"``: replace the code with a mandatory non-empty ``"code"`` string.
       Returns ``human_decision="edit"``, ``human_feedback=None``, the new ``code``,
       and a history event. ``human_rounds`` is unchanged (it counts rejections only).
@@ -46,8 +49,11 @@ def apply_human_decision(state: AgentState, response: Any) -> dict[str, Any]:
         raise ValueError(f"Resume response must be a dict, got {type(response).__name__}")
 
     decision = response.get("decision")
-    if decision not in ("approve", "reject", "edit"):
-        raise ValueError(f"Unknown decision: {decision!r}. Must be 'approve', 'reject', or 'edit'")
+    if decision not in ("approve", "reject", "reject_final", "edit"):
+        raise ValueError(
+            f"Unknown decision: {decision!r}. "
+            "Must be 'approve', 'reject', 'reject_final', or 'edit'"
+        )
 
     attempt = state.get("attempt", 0)
     human_rounds = state.get("human_rounds", 0)
@@ -63,10 +69,10 @@ def apply_human_decision(state: AgentState, response: Any) -> dict[str, Any]:
             "history": [event],
         }
 
-    if decision == "reject":
+    if decision in ("reject", "reject_final"):
         feedback = response.get("feedback")
         if not isinstance(feedback, str) or not feedback.strip():
-            raise ValueError("Decision 'reject' requires a non-empty 'feedback' string")
+            raise ValueError(f"Decision {decision!r} requires a non-empty 'feedback' string")
 
         new_human_rounds = human_rounds + 1
         feedback_truncated = feedback.strip()[:200]
@@ -74,20 +80,22 @@ def apply_human_decision(state: AgentState, response: Any) -> dict[str, Any]:
             "human_review",
             attempt,
             {
-                "decision": "reject",
+                "decision": decision,
                 "human_rounds": new_human_rounds,
                 "feedback": feedback_truncated,
             },
         )
 
         update: dict[str, Any] = {
-            "human_decision": "reject",
+            "human_decision": decision,
             "human_feedback": feedback.strip(),
             "human_rounds": new_human_rounds,
             "history": [event],
         }
 
-        if new_human_rounds > max_human_rounds:
+        if decision == "reject_final":
+            update["failure_reason"] = f"Reviewer rejected the solution: {feedback_truncated}"
+        elif new_human_rounds > max_human_rounds:
             update["failure_reason"] = (
                 f"Reviewer rejected the solution {new_human_rounds} time(s); "
                 f"max human rounds ({max_human_rounds}) exceeded. "

@@ -14,8 +14,8 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import SecretStr
 
-from evalcode.config import Settings
-from evalcode.errors import (
+from evalcode.core.config import Settings
+from evalcode.core.errors import (
     ConfigError,
     DailyQuotaExceeded,
     LLMAuthError,

@@ -13,9 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from evalcode.rag.chunking import split_markdown, stable_id, truncate_text
-from evalcode.rag.loaders import iter_introspection_chunks, iter_text_file_chunks
-from evalcode.rag.types import DocChunk
+from evalcode.rag.ingest import (
+    iter_introspection_chunks,
+    iter_text_file_chunks,
+    split_markdown,
+    stable_id,
+    truncate_text,
+)
+from evalcode.rag.store import DocChunk
 
 # Throwaway package exercising __all__, privacy, classes/methods, inherited
 # methods, a signature fallback, a re-export dedupe, a broken attribute, and

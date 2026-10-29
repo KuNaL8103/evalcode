@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from evalcode.config import get_settings
-from evalcode.nodes.run_tests import make_run_tests_node
+from evalcode.core.config import get_settings
+from evalcode.nodes import make_run_tests_node
 from evalcode.sandbox.errors import C_SANDBOX_ERROR
 
 

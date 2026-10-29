@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from evalcode.config import Settings, get_settings, load_settings
-from evalcode.errors import ConfigError
+from evalcode.core.config import Settings, get_settings, load_settings
+from evalcode.core.errors import ConfigError
 
 # Fake key built at runtime so the secret-scan test never sees a literal.
 FAKE_KEY = "AIza" + "FAKE" * 8

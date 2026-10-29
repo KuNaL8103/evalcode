@@ -16,10 +16,10 @@ from collections.abc import Callable
 from typing import Any
 
 from evalcode.analysis import analyze_run_result
-from evalcode.config import Settings
-from evalcode.errors import LLMError
+from evalcode.core.config import Settings
+from evalcode.core.errors import LLMError
 from evalcode.llm import TextLLM
-from evalcode.prompts import build_analyze_messages
+from evalcode.llm.prompts import build_analyze_messages
 from evalcode.state import AgentState, merge_usage, utc_now_iso
 
 
@@ -84,7 +84,7 @@ def make_analyze_error_node(
             result["token_usage"] = merge_usage(result.get("token_usage"), response.usage)
 
             # Lenient parse of <root_cause> and <fix_plan>
-            from evalcode.parsing import parse_tagged
+            from evalcode.llm.parsing import parse_tagged
 
             text = response.text
             if not text:

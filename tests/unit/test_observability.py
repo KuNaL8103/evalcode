@@ -12,10 +12,8 @@ from typing import Any
 
 import pytest
 
-from evalcode.config import Settings
-from evalcode.graph import Dependencies, resume_task, run_task
-from evalcode.llm import LLMResponse, TextLLM
-from evalcode.observability import (
+from evalcode.core.config import Settings
+from evalcode.core.observability import (
     RunLogger,
     build_logger,
     build_run_config,
@@ -25,6 +23,8 @@ from evalcode.observability import (
     redact,
     traced_node,
 )
+from evalcode.graph import Dependencies, resume_task, run_task
+from evalcode.llm import LLMResponse, TextLLM
 from evalcode.state import AgentState, merge_usage, utc_now_iso
 
 # --------------------------------------------------------------------------- #
@@ -777,7 +777,7 @@ def test_langsmith_config_and_logger_factory(tmp_path: Path):
 
     log_stream = io.StringIO()
     handler = logging.StreamHandler(log_stream)
-    logger_obs = logging.getLogger("evalcode.observability")
+    logger_obs = logging.getLogger("evalcode.core.observability")
     logger_obs.addHandler(handler)
     logger_obs.setLevel(logging.WARNING)
 

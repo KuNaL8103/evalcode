@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from evalcode.nodes.terminal import fail_node, finalize_node
+from evalcode.nodes import fail_node, finalize_node
 
 
 def test_finalize_and_fail_nodes():

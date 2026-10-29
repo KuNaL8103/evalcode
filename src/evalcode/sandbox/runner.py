@@ -106,63 +106,9 @@ def _top_imports(code: str) -> list[str]:
     return names
 
 
-def run_in_sandbox(
-    code: str,
-    tests: str,
-    *,
-    timeout_s: float = 30.0,
-    mem_mb: int = 128,
-) -> dict:
-    # Pre-flight syntax
-    try:
-        ast.parse(code)
-    except SyntaxError as exc:
-        return {
-            "passed": False,
-            "category": C_SYNTAX_ERROR,
-            "exit_code": 1,
-            "timed_out": False,
-            "duration_s": 0.0,
-            "tests_total": 0,
-            "tests_failed": 0,
-            "failures": [
-                {
-                    "test_name": "preflight",
-                    "error_type": "SyntaxError",
-                    "message": str(exc),
-                    "traceback": "",
-                }
-            ],
-            "stdout": "",
-            "stderr": "",
-        }
-    # Pre-flight imports
-    for mod in _top_imports(code):
-        try:
-            if importlib.util.find_spec(mod) is None:
-                return {
-                    "passed": False,
-                    "category": C_IMPORT_ERROR,
-                    "exit_code": 1,
-                    "timed_out": False,
-                    "duration_s": 0.0,
-                    "tests_total": 0,
-                    "tests_failed": 0,
-                    "failures": [
-                        {
-                            "test_name": "preflight",
-                            "error_type": "ImportError",
-                            "message": f"no module named {mod}",
-                            "traceback": "",
-                        }
-                    ],
-                    "stdout": "",
-                    "stderr": "",
-                }
-        except Exception:
-            pass
-
-    result: dict = {
+def new_result() -> dict:
+    """A fresh, all-default ``RunResult`` dict (category ``sandbox_error``)."""
+    return {
         "passed": False,
         "category": C_SANDBOX_ERROR,
         "exit_code": 1,
@@ -174,6 +120,123 @@ def run_in_sandbox(
         "stdout": "",
         "stderr": "",
     }
+
+
+def preflight(code: str) -> dict | None:
+    """Cheap host-side syntax/import check shared by every sandbox backend.
+
+    Returns a failed result dict when the code cannot possibly run, else None.
+    """
+    try:
+        ast.parse(code)
+    except SyntaxError as exc:
+        result = new_result()
+        result["category"] = C_SYNTAX_ERROR
+        result["failures"] = [
+            {
+                "test_name": "preflight",
+                "error_type": "SyntaxError",
+                "message": str(exc),
+                "traceback": "",
+            }
+        ]
+        return result
+    for mod in _top_imports(code):
+        try:
+            if importlib.util.find_spec(mod) is None:
+                result = new_result()
+                result["category"] = C_IMPORT_ERROR
+                result["failures"] = [
+                    {
+                        "test_name": "preflight",
+                        "error_type": "ImportError",
+                        "message": f"no module named {mod}",
+                        "traceback": "",
+                    }
+                ]
+                return result
+        except Exception:
+            pass
+    return None
+
+
+def finalize_result(result: dict, *, exit_code: int, report_path: str | Path) -> dict:
+    """Classify a finished pytest run and enforce the ``passed`` invariant.
+
+    Shared by the subprocess and Docker backends so both produce exactly the
+    same ``RunResult`` shape and category rules.
+    """
+    report = Path(report_path)
+    if report.exists():
+        total, failed, failures = parse_junit(str(report))
+        result["tests_total"] = total
+        result["tests_failed"] = failed
+        result["failures"] = failures if failures else []
+        result["exit_code"] = exit_code
+        if exit_code == 2:
+            # Collection error: classify from output, never a pass.
+            result["category"] = classify(
+                "", result["stdout"], result["stderr"], total, failed, exit_code
+            )
+            result["passed"] = False
+            result["failures"] = []
+        elif total == 0:
+            result["category"] = C_NO_TESTS
+            result["failures"] = [
+                {
+                    "test_name": "collection",
+                    "error_type": "NoTests",
+                    "message": "no tests collected",
+                    "traceback": "",
+                }
+            ]
+            result["passed"] = False
+        elif failed > 0:
+            tb_text = "".join(f.get("traceback", "") for f in result["failures"])
+            result["category"] = classify(
+                tb_text, result["stdout"], result["stderr"], total, failed, exit_code
+            )
+            result["passed"] = False
+        else:
+            result["category"] = PASS
+            result["passed"] = True
+    else:
+        result["tests_total"] = 0
+        result["tests_failed"] = 0
+        result["exit_code"] = exit_code
+        result["category"] = classify("", result["stdout"], result["stderr"], 0, 0, exit_code)
+        if exit_code == 2:
+            result["passed"] = False
+    # A non-passing exit code can never be reported as a pass.
+    if result["category"] == PASS and result.get("exit_code", 0) != 0:
+        result["category"] = C_SANDBOX_ERROR
+        result["passed"] = False
+    if result["category"] not in (
+        PASS,
+        C_SYNTAX_ERROR,
+        C_IMPORT_ERROR,
+        C_RUNTIME_ERROR,
+        C_ASSERTION_FAILURE,
+        C_TIMEOUT,
+        C_NO_TESTS,
+        C_SANDBOX_ERROR,
+    ):
+        result["category"] = C_SANDBOX_ERROR
+    return result
+
+
+def run_in_sandbox(
+    code: str,
+    tests: str,
+    *,
+    timeout_s: float = 30.0,
+    mem_mb: int = 128,
+) -> dict:
+    failed_preflight = preflight(code)
+    if failed_preflight is not None:
+        return failed_preflight
+
+    result: dict = new_result()
     with tempfile.TemporaryDirectory() as tmpdir:
         sol_path = Path(tmpdir) / "solution.py"
         test_path = Path(tmpdir) / "test_solution.py"
@@ -298,68 +361,12 @@ def run_in_sandbox(
                             pass
                 except Exception:
                     pass
-        report_path = Path(tmpdir) / "report.xml"
-        if report_path.exists():
-            total, failed, failures = parse_junit(str(report_path))
-            result["tests_total"] = total
-            result["tests_failed"] = failed
-            result["failures"] = failures if failures else []
-            exit_code = proc.returncode if proc and proc.returncode is not None else 0
-            result["exit_code"] = exit_code
-            # Collection error (pytest exit code 2): classify from stdout/stderr, passed=False
-            if exit_code == 2:
-                result["category"] = classify(
-                    "", result["stdout"], result["stderr"], total, failed, exit_code
-                )
-                result["passed"] = False
-                result["failures"] = []  # collection errors have no junit failures
-            elif total == 0:
-                result["category"] = C_NO_TESTS
-                result["failures"] = [
-                    {
-                        "test_name": "collection",
-                        "error_type": "NoTests",
-                        "message": "no tests collected",
-                        "traceback": "",
-                    }
-                ]
-                result["passed"] = False
-            elif failed > 0:
-                tb_text = "".join(f.get("traceback", "") for f in result["failures"])
-                result["category"] = classify(
-                    tb_text, result["stdout"], result["stderr"], total, failed, exit_code
-                )
-                result["passed"] = False
-            else:
-                result["category"] = PASS
-                result["passed"] = True
-        else:
-            total = 0
-            result["tests_total"] = total
-            result["tests_failed"] = 0
-            exit_code = proc.returncode if proc and proc.returncode is not None else 0
-            result["exit_code"] = exit_code
-            result["category"] = classify(
-                "", result["stdout"], result["stderr"], total, 0, exit_code
-            )
-            # Collection error (exit_code 2, no junit): passed=False, failures stays []
-            if exit_code == 2:
-                result["passed"] = False
-        # Any nonzero exit_code that would otherwise end as "pass" -> sandbox_error
-        if result["category"] == PASS and result.get("exit_code", 0) != 0:
-            result["category"] = C_SANDBOX_ERROR
-            result["passed"] = False
-        if result["category"] not in (
-            PASS,
-            C_SYNTAX_ERROR,
-            C_IMPORT_ERROR,
-            C_RUNTIME_ERROR,
-            C_ASSERTION_FAILURE,
-            C_TIMEOUT,
-            C_NO_TESTS,
-            C_SANDBOX_ERROR,
-        ):
-            result["category"] = C_SANDBOX_ERROR
+        exit_code = proc.returncode if proc and proc.returncode is not None else 0
+        finalize_result(
+            result,
+            exit_code=exit_code,
+            report_path=Path(tmpdir) / "report.xml",
+        )
         if sys.platform == "win32" and mem_mb > 0:
             logger.warning("sandbox: rlimits skipped on Windows (wall-clock timeout only)")
     return result

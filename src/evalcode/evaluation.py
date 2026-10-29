@@ -17,10 +17,10 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from evalcode.config import Settings
-from evalcode.errors import ConfigError
+from evalcode.core.config import Settings
+from evalcode.core.errors import ConfigError
+from evalcode.core.observability import redact
 from evalcode.graph import Dependencies, build_logger, run_task
-from evalcode.observability import redact
 from evalcode.state import AgentState
 
 __all__ = [
@@ -234,7 +234,7 @@ def build_record(
     if failure_reason:
         failure_reason = redact(failure_reason, secrets, max_str=300)
 
-    from evalcode.observability import utc_now_iso
+    from evalcode.core.observability import utc_now_iso
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -372,7 +372,7 @@ def run_eval(
         except Exception as exc:
             # Record error but continue
             elapsed = clock() - start
-            from evalcode.observability import utc_now_iso
+            from evalcode.core.observability import utc_now_iso
 
             record = {
                 "schema_version": SCHEMA_VERSION,

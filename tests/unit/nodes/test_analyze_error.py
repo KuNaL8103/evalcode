@@ -6,9 +6,9 @@ import copy
 import json
 from typing import Any
 
-from evalcode.config import Settings
-from evalcode.errors import DailyQuotaExceeded
-from evalcode.nodes.analyze_error import make_analyze_error_node
+from evalcode.core.config import Settings
+from evalcode.core.errors import DailyQuotaExceeded
+from evalcode.nodes import make_analyze_error_node
 from evalcode.state import ErrorAnalysis
 from tests.fakes import ScriptedLLM
 
