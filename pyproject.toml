@@ -29,6 +29,9 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "streamlit",
+    # Runtime (not just dev): the subprocess sandbox runs
+    # `sys.executable -m pytest` in the host interpreter.
+    "pytest>=8,<9",
 ]
 
 [project.urls]

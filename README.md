@@ -227,7 +227,7 @@ pip install -e ".[dev,corpus]"
 - `fastapi`, `uvicorn`, `streamlit` — the REST service and the browser dashboard.
 - `rank_bm25` — lexical scoring fused with dense retrieval via RRF.
 - `pyyaml` — reads the evaluation task files.
-- `pytest`, `pytest-cov`, `ruff` (`dev` extra) — test runner and lint/format.
+- `pytest` — the subprocess sandbox runs `sys.executable -m pytest`, so it is a **runtime** dependency of the app (not only of the dev tooling); `pytest-cov`, `ruff` (`dev` extra) — coverage and lint/format.
 - `pandas`, `numpy`, `requests` (`corpus` extra) — installed so their APIs can be introspected into the index and used by eval tasks.
 
 ### System-level dependencies
@@ -600,6 +600,7 @@ Highlights, from the failures this project actually handles:
 - **`refusing to resume with a different graph topology`** — the task started with RAG but the index no longer exists. Fix: re-ingest before resuming, so the graph shape matches the checkpoint.
 - **Sandbox timeouts or memory not enforced on Windows** — expected. Cause: `resource`/`os.killpg` are POSIX-only; on Windows rlimits are skipped (a warning is logged) and the process tree is killed with `taskkill /F /T /PID <pid>`. The wall-clock timeout is the only resource guard there. Negative finding: memory-limit behavior cannot be tested on Windows; the POSIX memory test is skipped outside Linux/CI.
 - **A generated test that fails to collect reports `passed=False`** — pytest exits with code 2 on collection errors, which the sandbox maps to a category from the exception type and never counts as a pass. Diagnostic: `evalcode eval --verify-refs` runs the reference solutions in the real sandbox with no LLM and should print `PASS` for every task.
+- **`sandbox_error` with `No module named pytest` on Streamlit Community Cloud** — the subprocess backend runs `sys.executable -m pytest` in the *host* venv, but pytest was declared only in the `dev` extra, which deployment installers (uv on Streamlit Cloud) do not install. Fix: keep `pytest` in `[project].dependencies` (it is a runtime dependency of the sandbox, not just a dev tool), then reboot/redeploy the app. A Docker backend would not hit this, but Streamlit Cloud has no Docker daemon, so the fallback is always `subprocess`.
 - **Garbled or `?` characters in Windows console output** — the console defaults to cp1252. The CLI reconfigures stdout/stderr with `errors="replace"` and sanitizes rendered text; library modules still must not print non-ASCII, which is why only the `rag` `python -m` entry points are allowed to print.
 - **The first ingest or `slow` test appears to hang** — it is downloading the MiniLM weights once. Subsequent runs use the cache.
 
