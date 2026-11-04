@@ -63,6 +63,17 @@ def test_classify_assertion():
     assert classify("AssertionError: 1 != 2", "", "", 3, 1) == C_ASSERTION_FAILURE
 
 
+def test_classify_pytest_raises_did_not_raise():
+    # pytest.raises failures say "DID NOT RAISE" and name the expected
+    # exception, but never emit an AssertionError.
+    output = (
+        ">       with pytest.raises(ValueError):\n"
+        "E       Failed: DID NOT RAISE <class 'ValueError'>\n"
+        "test_solution.py:88: Failed\n"
+    )
+    assert classify(output, "", "", 30, 1, 1) == C_ASSERTION_FAILURE
+
+
 def test_classify_import():
     assert classify("ModuleNotFoundError: xyz", "", "", 0, 0) == C_IMPORT_ERROR
 
@@ -104,6 +115,23 @@ def test_sandbox_assertion_failure():
     result = run_in_sandbox(code, tests, timeout_s=15.0, mem_mb=256)
     assert result["category"] == C_ASSERTION_FAILURE, f"category={result['category']}"
     assert result["tests_failed"] >= 1, f"tests_failed={result['tests_failed']}"
+
+
+def test_sandbox_pytest_raises_did_not_raise():
+    # End-to-end version of the "DID NOT RAISE" classification: the solution
+    # returns normally where a ValueError was expected.
+    tests = (
+        "import pytest\n"
+        "from solution import add\n\n"
+        "def test_expected_raise():\n"
+        "    with pytest.raises(ValueError):\n"
+        "        add(1, 2)\n"
+    )
+    result = run_in_sandbox(PASSING_CODE, tests, timeout_s=15.0, mem_mb=256)
+    assert result["category"] == C_ASSERTION_FAILURE, (
+        f"category={result['category']} stderr={result['stderr']!r} stdout={result['stdout']!r}"
+    )
+    assert result["tests_failed"] >= 1
 
 
 def test_sandbox_runtime_exception():

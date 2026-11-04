@@ -88,7 +88,11 @@ def classify(
         return C_SYNTAX_ERROR
     if "modulenotfounderror" in lower or "importerror" in lower:
         return C_IMPORT_ERROR
-    if "assertionerror" in lower:
+    # ``pytest.raises(...)`` failures print "Failed: DID NOT RAISE <...>" and
+    # never emit an AssertionError, so they must be matched explicitly before
+    # the generic "error" fallback below (the traceback still names the
+    # expected exception, e.g. ValueError).
+    if "assertionerror" in lower or "did not raise" in lower:
         return C_ASSERTION_FAILURE
     if "timeout" in lower or "timed out" in lower:
         return C_TIMEOUT
