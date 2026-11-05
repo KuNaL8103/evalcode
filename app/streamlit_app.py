@@ -740,8 +740,7 @@ def main() -> None:
                 st.warning("Enter a coding task first.")
             else:
                 with st.spinner(
-                    "Running retrieve → generate → sandbox → revise. "
-                    "This can take a minute on the free tier..."
+                    "Running retrieve → generate → sandbox → revise. This can take a minute..."
                 ):
                     try:
                         state, elapsed = run_agent(

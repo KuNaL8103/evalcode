@@ -290,7 +290,7 @@ def test_generate_node_reask_and_failures() -> None:
     assert len(llm2.calls) == 2
 
     # (c) daily quota on the first call -> failed update with the quota message.
-    llm3 = ScriptedLLM([DailyQuotaExceeded("free-tier daily limit reached")])
+    llm3 = ScriptedLLM([DailyQuotaExceeded("daily limit reached")])
     update3 = make_generate_node(llm3, make_settings())({"task": "t"})
     assert update3["status"] == "failed"
     assert "daily limit" in update3["failure_reason"]

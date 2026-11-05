@@ -1,6 +1,6 @@
 """Tolerant parser for the tagged plain-text LLM output protocol (§2).
 
-Free models ignore strict formats, so the parser accepts: case-insensitive
+Models may ignore strict formats, so the parser accepts: case-insensitive
 tags, stray whitespace, markdown code fences *inside* the ``<code>``/
 ``<tests>`` tags, a missing closing tag at the end of the text, and prose
 before/after. When no ``<code>`` tag exists at all, the first fenced block

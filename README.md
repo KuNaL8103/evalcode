@@ -1,6 +1,6 @@
 # evalcode — Iterative code-generation agent (RAG + LangGraph)
 
-`evalcode` is an iterative code-generation agent that behaves like a developer with a scratchpad: it retrieves version-matched Python API docs with a hybrid BM25 + dense retriever, writes a `solution.py` plus pytest tests with a Gemini free-tier model, runs the tests in a subprocess or Docker sandbox, analyzes failures, and revises in a bounded loop. It ships with a FastAPI microservice (`/health`, `/generate`) as well as the CLI. The only required input is a task string; the only external requirement is a free `GEMINI_API_KEY`. Its notable property is that **every reliability concern — free-tier rate limits, retry budgets, output-format drift, sandbox isolation, and resumable human review — is designed into the loop rather than bolted on**.
+`evalcode` is an iterative code-generation agent that behaves like a developer with a scratchpad: it retrieves version-matched Python API docs with a hybrid BM25 + dense retriever, writes a `solution.py` plus pytest tests with a Gemini model, runs the tests in a subprocess or Docker sandbox, analyzes failures, and revises in a bounded loop. It ships with a FastAPI microservice (`/health`, `/generate`) as well as the CLI. The only required input is a task string; the only external requirement is a standard Gemini API key (`GEMINI_API_KEY`). Its notable property is that **every reliability concern — provider rate limits, retry budgets, output-format drift, sandbox isolation, and resumable human review — is designed into the loop rather than bolted on**.
 
 ```text
   INPUT                          PROCESSING (LangGraph loop)                     OUTPUT
@@ -71,7 +71,7 @@ Major stages:
 7. **Finalize or fail** — three independent budgets (API retries, per-run LLM calls, graph retries and human rounds) bound the loop.
 8. **Observe and evaluate** — one JSONL event per node plus a `summary.json`, and `evalcode eval` runs the same task set with RAG on and off for comparison.
 
-The project demonstrates retrieval-augmented generation worn end-to-end (chunking, local embeddings, vector search, prompt grounding), LangGraph state machines with conditional edges and interrupts, subprocess isolation with platform-specific process control, and defensive free-tier LLM engineering (throttling, exponential backoff with jitter, `Retry-After` handling, daily-quota fail-fast, and a per-run call budget). It also handles real cross-platform friction: Windows has no `resource`/`os.killpg`, so rlimits are skipped and process trees are killed with `taskkill /F /T`; consoles default to cp1252, so the CLI reconfigures stdio and ASCII-sanitizes output.
+The project demonstrates retrieval-augmented generation worn end-to-end (chunking, local embeddings, vector search, prompt grounding), LangGraph state machines with conditional edges and interrupts, subprocess isolation with platform-specific process control, and defensive LLM reliability engineering (throttling, exponential backoff with jitter, `Retry-After` handling, daily-quota fail-fast, and a per-run call budget). It also handles real cross-platform friction: Windows has no `resource`/`os.killpg`, so rlimits are skipped and process trees are killed with `taskkill /F /T`; consoles default to cp1252, so the CLI reconfigures stdio and ASCII-sanitizes output.
 
 ---
 
@@ -130,7 +130,7 @@ The project demonstrates retrieval-augmented generation worn end-to-end (chunkin
 - **Retrieval scoring**: Chroma cosine space returns `score = 1 - distance` in `[-1, 1]` (1.0 = identical). Chunks below `RETRIEVAL_MIN_SCORE` (default `0.2`) are dropped; multiple queries keep the max score per chunk id; the list is sorted descending and cut to `RETRIEVAL_TOP_K` (default `5`). Merged new+prior docs are capped at `RETRIEVAL_MAX_DOCS` (default `8`).
 - **Re-retrieval rule**: `needs_docs = (category == "api_misuse") and len(retrieval_queries) > 0`. After a failure, `route_after_analysis` goes to `retrieve` only if `needs_docs` and **not all** queries are already in `retrieval_queries` — that accumulated list is the dedupe memory that prevents repeat-retrieval loops.
 - **Backoff formula**: `delay = min(LLM_BACKOFF_MAX_S, LLM_BACKOFF_BASE_S * 2**attempt) * rng()`, then `max(delay, required_wait)` where `required_wait` comes from `Retry-After` / `X-RateLimit-Reset` / Gemini's `retryDelay`. `attempt` is per-call; the lifetime retry counter never gates retries.
-- **Fail-fast rules**: a 429 whose body matches daily-limit keywords, or a required wait above `LLM_MAX_WAIT_S` (default `120`), raises `DailyQuotaExceeded` immediately instead of burning retries. HTTP 401/403/402 → `LLMAuthError`, 404 → `LLMModelError`, other 4xx → `LLMRequestError`, exhausted retries → `LLMUnavailable`.
+- **Fail-fast rules**: a 429 whose body matches daily-quota keywords, or a required wait above `LLM_MAX_WAIT_S` (default `120`), raises `DailyQuotaExceeded` immediately instead of burning retries. HTTP 401/403/402 → `LLMAuthError`, 404 → `LLMModelError`, other 4xx → `LLMRequestError`, exhausted retries → `LLMUnavailable`.
 - **Throttle**: at least `LLM_MIN_INTERVAL_S` (default `3.0`) between logical calls, enforced from the last call's monotonic clock.
 - **Three budgets**: API level `LLM_MAX_API_RETRIES` (default `5`) per call; run level `MAX_LLM_CALLS_PER_RUN` (default `10`) logical calls → `LLMBudgetExceeded` → run ends `failed`; graph level `MAX_RETRIES` (default `3`) automatic revisions and `MAX_HUMAN_ROUNDS` (default `2`) human rejections.
 - **Parsing safety**: the parser accepts case-insensitive tags, stray whitespace, markdown fences inside tags, and a missing closing tag; if no `<code>` tag exists at all it falls back to the first fenced block as code and the second as tests. `ParseError` carries only a short reason, never the model's raw text.
@@ -211,7 +211,7 @@ evalcode/
 - **Language**: Python only. Non-Python targets and multi-file projects are explicit non-goals.
 - **Hardware**: CPU only — no GPU required. A few hundred MB of disk for the venv, the embedding-model cache, the Chroma index, and the SQLite checkpoint.
 - **Network**: required for the first embedding-model download and for every Gemini call.
-- **Credentials**: one free `GEMINI_API_KEY` from [https://aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+- **Credentials**: one standard `GEMINI_API_KEY` from [https://aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 
 ### Language-level dependencies
 
@@ -418,7 +418,7 @@ All settings come from environment variables or `.env` and are declared in `src/
 
 | Parameter                 | Default                                                      | Description                                                                                                                                              |
 | ------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GEMINI_API_KEY`        | *(required)*                                               | Free API key from [https://aistudio.google.com/apikey](https://aistudio.google.com/apikey).                                                               |
+| `GEMINI_API_KEY`        | *(required)*                                               | Gemini API key from [https://aistudio.google.com/apikey](https://aistudio.google.com/apikey).                                                              |
 | `LLM_BASE_URL`          | `https://generativelanguage.googleapis.com/v1beta/openai/` | OpenAI-compatible endpoint for Gemini.                                                                                                                   |
 | `LLM_MODEL`             | `gemini-3.5-flash-lite`                                    | Model id; blank in `.env` falls back to the default. **Do not** set it to an "inkling" model — those return HTTP 403 for plain API-key clients. |
 | `LLM_TEMPERATURE`       | `0.2`                                                      | Sampling temperature (`>= 0`).                                                                                                                         |
@@ -428,8 +428,8 @@ All settings come from environment variables or `.env` and are declared in `src/
 | `LLM_BACKOFF_BASE_S`    | `2.0`                                                      | Exponential backoff base, seconds.                                                                                                                       |
 | `LLM_BACKOFF_MAX_S`     | `60.0`                                                     | Backoff cap, seconds.                                                                                                                                    |
 | `LLM_MAX_WAIT_S`        | `120.0`                                                    | Give up with `DailyQuotaExceeded` if a required wait exceeds this many seconds.                                                                        |
-| `LLM_MIN_INTERVAL_S`    | `3.0`                                                      | Minimum seconds between LLM calls (free-tier per-minute throttling).                                                                                     |
-| `MAX_LLM_CALLS_PER_RUN` | `10`                                                       | Hard cap on logical LLM calls per run. **Do not raise** this without reason — every extra call spends free-tier quota.                            |
+| `LLM_MIN_INTERVAL_S`    | `3.0`                                                      | Minimum seconds between LLM calls (per-minute request throttling).                                                                                       |
+| `MAX_LLM_CALLS_PER_RUN` | `10`                                                       | Hard cap on logical LLM calls per run. **Do not raise** this without reason — every extra call consumes API quota.                            |
 
 ### Embeddings & vector store
 
@@ -481,7 +481,7 @@ All settings come from environment variables or `.env` and are declared in `src/
 | `LANGSMITH_API_KEY` | *(unset)*  | LangSmith key; tracing stays off if this is missing. |
 | `LANGSMITH_PROJECT` | `evalcode` | Project name for traces.                             |
 
-> **Debug/optional parameters** (off by default; the deterministic paths always run): `ANALYZE_WITH_LLM` (`false`) adds one LLM call to refine error diagnosis; `QUERY_REWRITE_WITH_LLM` (`false`) uses an LLM to rewrite the first-pass retrieval query; `LANGSMITH_TRACING` + `LANGSMITH_API_KEY` add remote tracing. All three consume extra quota or network and are not needed for a normal run.
+> **Debug/optional parameters** (off by default; the deterministic paths always run): `ANALYZE_WITH_LLM` (`false`) adds one LLM call to refine error diagnosis; `QUERY_REWRITE_WITH_LLM` (`false`) uses an LLM to rewrite the first-pass retrieval query; `LANGSMITH_TRACING` + `LANGSMITH_API_KEY` add remote tracing. All three consume extra API quota or network and are not needed for a normal run.
 
 ---
 
@@ -555,7 +555,7 @@ Full contracts are enforced in `src/evalcode/llm/parsing.py`, `src/evalcode/stat
 ```bash
 pytest -q                 # default suite: excludes live and slow; 172 passed, 4 deselected
 pytest -m slow -q         # real embedding model (downloads MiniLM weights once)
-pytest -m live -q         # real Gemini calls (needs GEMINI_API_KEY; uses free quota)
+pytest -m live -q         # real Gemini calls (needs GEMINI_API_KEY; uses API quota)
 ruff check .
 ruff format --check .
 ```
@@ -593,8 +593,8 @@ Highlights, from the failures this project actually handles:
 
 - **`GEMINI_API_KEY is not set` and exit code 4** — the key is missing or blank. Cause: `require_api_key()` raises `ConfigError`. Fix: copy `.env.example` to `.env`, set `GEMINI_API_KEY`, and re-run. The message never contains key material.
 - **Every call fails with HTTP 403** — the model is restricted to specific clients. Cause: some Gemini models (the "inkling" family) reject plain API-key clients. Fix: set `LLM_MODEL` to a model that allows plain API-key access; the error text is truncated into the message. Do **not** keep retrying a 403 — `LLMClient` raises `LLMAuthError` without retrying.
-- **HTTP 404 model not found** — the free model slug was renamed or retired. Fix: update `LLM_MODEL` (free slugs change over time). `LLMModelError` raises immediately with this hint.
-- **Exit code 3 / `DailyQuotaExceeded`** — the free daily quota is gone. Cause: a daily-limit 429, or a required wait longer than `LLM_MAX_WAIT_S`. Fix: stop and wait for the quota to reset; do **not** immediately retry. `evalcode eval` is resumable, so re-run the same command later and completed cells are skipped.
+- **HTTP 404 model not found** — the model id was renamed or retired. Fix: update `LLM_MODEL` (model ids change over time). `LLMModelError` raises immediately with this hint.
+- **Exit code 3 / `DailyQuotaExceeded`** — the daily quota is exhausted. Cause: a daily-quota 429, or a required wait longer than `LLM_MAX_WAIT_S`. Fix: stop and wait for the quota to reset; do **not** immediately retry. `evalcode eval` is resumable, so re-run the same command later and completed cells are skipped.
 - **Exit code 5 / `AWAITING REVIEW`** — a non-interactive run paused at human review. Fix: `evalcode resume <TASK_ID> --approve` (or `--reject "..."` / `--edit-file PATH`). The task id is printed as `TASK_ID:` at the start of the run.
 - **`RAG disabled: no usable index (run \`evalcode ingest\`)`** — the Chroma directory is missing or empty. Fix: `evalcode ingest --libs ...`. Retrieval failures never fail a run; they just degrade to no docs.
 - **`refusing to resume with a different graph topology`** — the task started with RAG but the index no longer exists. Fix: re-ingest before resuming, so the graph shape matches the checkpoint.
@@ -616,7 +616,7 @@ Highlights, from the failures this project actually handles:
 - **Windows skips resource limits.** Only the wall-clock timeout applies on Windows, and the Linux sandbox path is verified only through CI (the dev machine is Windows).
 - **Single provider, single file, Python only.** Gemini is the only LLM; multi-file projects and non-Python languages are explicit non-goals; the model output is a `solution.py` plus one test file.
 - **Quota-bounded task size.** `MAX_LLM_CALLS_PER_RUN` and the graph retry caps limit how large or iterative a task can be; hard tasks will end `failed` rather than run forever.
-- **Free model slugs drift.** `gemini-3.5-flash-lite` is only the default; if Google retires it, runs fail with a clear `LLMModelError` until `LLM_MODEL` is updated.
+- **Model ids drift.** `gemini-3.5-flash-lite` is only the default; if Google retires it, runs fail with a clear `LLMModelError` until `LLM_MODEL` is updated.
 
 ---
 
@@ -634,4 +634,4 @@ Highlights, from the failures this project actually handles:
 
 MIT — see [`LICENSE`](LICENSE).
 
-*Built as a portfolio project that is nonetheless real end to end: a real local RAG pipeline, a real LangGraph state machine with interrupts, a real subprocess sandbox with platform-specific process control, real free-tier quota engineering, and a real — if humbling — evaluation showing RAG at the ceiling on easy tasks.*
+*Built as a portfolio project that is nonetheless real end to end: a real local RAG pipeline, a real LangGraph state machine with interrupts, a real subprocess sandbox with platform-specific process control, real LLM reliability engineering, and a real — if humbling — evaluation showing RAG at the ceiling on easy tasks.*

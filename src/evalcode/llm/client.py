@@ -1,6 +1,6 @@
 """Gemini LLM access layer (ARCHITECTURE §5).
 
-The only provider is Gemini (free models via OpenAI-compatible endpoint).
+The only provider is Gemini (via the OpenAI-compatible endpoint).
 ``get_chat_model`` builds a ``ChatOpenAI`` with SDK retries disabled
 (``max_retries=0``); ``LLMClient`` owns the whole retry policy: throttle,
 per-run call budget, exponential backoff + jitter,
@@ -61,7 +61,7 @@ _THINK_TRAILING_RE = re.compile(THINK_OPEN + r"\s*.*\Z", re.DOTALL)
 # quotes, so accept both quote styles.
 _RETRY_DELAY_RE = re.compile(r"""["']retryDelay["']\s*:\s*["']?(\d+(?:\.\d+)?)s?""")
 
-# Case-insensitive markers that a 429 refers to the *daily* free quota.
+# Case-insensitive markers that a 429 refers to the *daily* quota.
 _DAILY_LIMIT_KEYWORDS = (
     "per-day",
     "per day",
@@ -273,7 +273,7 @@ class LLMClient:
                 text = str(exc)
                 if any(kw in text.lower() for kw in _DAILY_LIMIT_KEYWORDS):
                     raise DailyQuotaExceeded(
-                        f"Gemini response indicates the daily free quota is exhausted "
+                        f"Gemini response indicates the daily quota is exhausted "
                         f"({text[:160]}). Wait for the quota to reset (or add credits)."
                     ) from exc
                 delay = self._retry_backoff(attempt, purpose, "malformed response", exc)
@@ -336,7 +336,7 @@ class LLMClient:
         if status == 404:
             raise LLMModelError(
                 f"Gemini could not find model '{settings.llm_model}' (HTTP 404). "
-                "Check LLM_MODEL; free models change — see https://ai.google.dev/gemini-api/docs/models."
+                "Check LLM_MODEL; model ids change — see https://ai.google.dev/gemini-api/docs/models."
             ) from exc
         if 400 <= status < 500 and status not in (408, 429):
             raise LLMRequestError(
@@ -348,7 +348,7 @@ class LLMClient:
         if status == 429:
             if any(kw in text.lower() for kw in _DAILY_LIMIT_KEYWORDS):
                 raise DailyQuotaExceeded(
-                    f"Gemini reports the daily free quota is exhausted ({text[:160]}). "
+                    f"Gemini reports the daily quota is exhausted ({text[:160]}). "
                     "Wait for the quota to reset (or add credits) and try again later."
                 ) from exc
             required_wait = self._header_wait(exc)
@@ -366,7 +366,7 @@ class LLMClient:
             if required_wait > settings.llm_max_wait_s:
                 raise DailyQuotaExceeded(
                     f"Gemini asked us to wait {required_wait:.0f}s before retrying, which "
-                    f"exceeds LLM_MAX_WAIT_S ({settings.llm_max_wait_s:.0f}s) — the free quota "
+                    f"exceeds LLM_MAX_WAIT_S ({settings.llm_max_wait_s:.0f}s) — the quota "
                     "is likely exhausted for today. Wait for the quota to reset (or add credits)."
                 ) from exc
             reason = "rate limited (HTTP 429)"

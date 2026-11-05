@@ -49,8 +49,8 @@ class LLMModelError(LLMError):
     """The configured model was not found on Gemini (404)."""
 
     _DEFAULT_MESSAGE = (
-        "Gemini model not found. Check LLM_MODEL; free models change — "
-        "see https://ai.google.dev/gemini-api/docs/models for current free slugs."
+        "Gemini model not found. Check LLM_MODEL; model ids change — "
+        "see https://ai.google.dev/gemini-api/docs/models for the current catalog."
     )
 
 
@@ -64,10 +64,10 @@ class LLMRequestError(LLMError):
 
 
 class DailyQuotaExceeded(LLMError):
-    """The free daily quota is exhausted; stop immediately (do not retry)."""
+    """The daily provider quota is exhausted; stop immediately (do not retry)."""
 
     _DEFAULT_MESSAGE = (
-        "Gemini daily free quota exhausted. Wait for the quota to reset "
+        "Gemini daily quota exhausted. Wait for the quota to reset "
         "(or add credits at https://ai.google.dev/gemini-api/docs/usage) and try again later."
     )
 
@@ -83,7 +83,7 @@ class LLMBudgetExceeded(LLMError):
 
     _DEFAULT_MESSAGE = (
         "Per-run LLM call budget (MAX_LLM_CALLS_PER_RUN) exhausted; stopping "
-        "to protect the free quota."
+        "to protect the API quota."
     )
 
 

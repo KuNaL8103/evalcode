@@ -124,7 +124,7 @@ class Settings(BaseSettings):
         key = self.gemini_api_key
         if key is None or not key.get_secret_value().strip():
             raise ConfigError(
-                "GEMINI_API_KEY is not set. Get a free API key at "
+                "GEMINI_API_KEY is not set. Get a Gemini API key at "
                 "https://aistudio.google.com/apikey, then export GEMINI_API_KEY in your "
                 "environment or set it in a git-ignored .env file (copy "
                 ".env.example to .env and fill it in). Never commit your key."

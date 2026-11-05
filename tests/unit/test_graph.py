@@ -245,7 +245,7 @@ def test_graph_recursion_limit():
 
 def test_graph_llm_failures():
     # (a) DailyQuotaExceeded on the FIRST LLM call
-    llm1 = ScriptedLLM([DailyQuotaExceeded("free-tier daily limit reached")])
+    llm1 = ScriptedLLM([DailyQuotaExceeded("daily limit reached")])
 
     def sandbox(code, tests, timeout_s, mem_mb):
         pytest.fail("sandbox should not be called")

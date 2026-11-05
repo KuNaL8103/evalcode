@@ -1,6 +1,6 @@
 """Prompts for the generate node and analyze_error node (tagged plain-text protocol).
 
-Kept compact on purpose: these run on small free-tier quotas. The system
+Kept compact on purpose: smaller prompts keep latency and API usage low. The system
 prompt pins the exact output shape; ``build_generate_messages`` assembles
 system + one human message (task, doc context, optional provided tests);
 ``FORMAT_REMINDER`` is the short strict re-ask sent when a reply fails to

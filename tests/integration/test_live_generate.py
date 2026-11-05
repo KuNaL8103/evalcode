@@ -1,7 +1,7 @@
 """Opt-in live test: the generate path against real Gemini (``-m live``).
 
 Makes at most 2 calls (one strict re-ask only if the first reply is
-unparseable) on the DEFAULT free model. Skips with a clear reason when
+unparseable) on the DEFAULT model. Skips with a clear reason when
 ``GEMINI_API_KEY`` is unavailable.
 """
 

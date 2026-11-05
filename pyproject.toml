@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "evalcode"
 version = "0.1.0"
-description = "Iterative code-generation agent: RAG + LangGraph with a Gemini free-tier model, sandboxed tests, and a bounded retry loop."
+description = "Iterative code-generation agent: RAG + LangGraph with a Gemini model, sandboxed tests, and a bounded retry loop."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Kunal Dabbe" }]
@@ -66,7 +66,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "live: real Gemini calls (needs GEMINI_API_KEY; consumes free quota)",
+    "live: real Gemini calls (needs GEMINI_API_KEY; consumes API quota)",
     "slow: downloads the real embedding model",
 ]
 addopts = "-m 'not live and not slow'"

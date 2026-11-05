@@ -84,11 +84,11 @@ def test_defaults() -> None:
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LLM_MODEL", "other/model:free")
+    monkeypatch.setenv("LLM_MODEL", "other/model")
     monkeypatch.setenv("MAX_RETRIES", "7")
     monkeypatch.setenv("GEMINI_API_KEY", FAKE_KEY)
     s = Settings()
-    assert s.llm_model == "other/model:free"
+    assert s.llm_model == "other/model"
     assert s.max_retries == 7
     assert s.gemini_api_key is not None
     assert s.gemini_api_key.get_secret_value() == FAKE_KEY

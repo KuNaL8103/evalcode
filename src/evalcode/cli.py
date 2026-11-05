@@ -957,7 +957,7 @@ def eval_command(
 
     # Exit codes
     if outcome.stopped == "quota":
-        console.print(_safe("stopped: free-tier daily quota exhausted; rerun later to resume"))
+        console.print(_safe("stopped: daily quota exhausted; rerun later to resume"))
         raise typer.Exit(EXIT_QUOTA)
     if outcome.stopped == "auth":
         console.print(_safe("stopped: authentication error"))

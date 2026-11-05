@@ -537,7 +537,7 @@ def test_analyze_llm_refinement_and_fallback() -> None:
     assert update["history"][0]["summary"]["llm"] is True
 
     # LLMError subclass (DailyQuotaExceeded) -> deterministic result, no token_usage
-    llm2 = ScriptedLLM([DailyQuotaExceeded("free-tier daily limit reached")])
+    llm2 = ScriptedLLM([DailyQuotaExceeded("daily limit reached")])
     node2 = make_analyze_error_node(llm2, make_settings(analyze_with_llm=True))
     state2 = {"run_result": ATTRIBUTE_MISUSE_RUN_RESULT, "code": CODE, "tests": TESTS, "attempt": 1}
     update2 = node2(state2)

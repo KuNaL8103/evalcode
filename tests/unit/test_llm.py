@@ -221,9 +221,9 @@ def test_wait_above_max_wait_raises_daily_quota() -> None:
 
 
 def test_daily_limit_429_fails_fast_without_retries() -> None:
-    # Bodies loop: the legacy free-tier daily text plus the other markers.
+    # Bodies loop: a legacy provider daily-limit text plus the other markers.
     bodies = [
-        # The legacy free-tier 429 text (implicit concatenation stays verbatim).
+        # A legacy provider 429 text (implicit concatenation stays verbatim).
         "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock "
         "1000 free model requests per day",
         "You have reached your per-day request limit",
@@ -240,7 +240,7 @@ def test_daily_limit_429_fails_fast_without_retries() -> None:
         assert len(chat.calls) == 1  # ZERO retries
         assert sleep.calls == []
 
-    # (a) Daily-quota body with exact free-tier marker → zero retries.
+    # (a) Daily-quota body with an exact daily-limit marker → zero retries.
     quota_body = "GenerateRequestsPerDayPerProjectPerModel-FreeTier: limit"
     error = make_rate_limit_error(
         body={"error": {"message": quota_body}}, message=quota_body, headers={"retry-after": "5"}
@@ -309,7 +309,7 @@ def test_missing_model_raises_model_error() -> None:
         [
             make_status_error(
                 404,
-                body={"error": {"message": "No endpoints found for gemini/does-not-exist:free"}},
+                body={"error": {"message": "No endpoints found for gemini/does-not-exist"}},
             ),
             ok_message(),
         ]
