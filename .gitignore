@@ -36,3 +36,4 @@ logs/
 
 # Eval artifacts
 eval/results/raw/
+.coverage
